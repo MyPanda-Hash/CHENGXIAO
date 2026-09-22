@@ -1,0 +1,57 @@
+{
+  "name": "dsh-peer-mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Let two DeepSeek Harness machines trade work and files over the network while each machine's files stay where they are, gated by a one-time pairing code.",
+  "license": "MIT",
+  "main": "./lib/plugin.js",
+  "exports": {
+    ".": "./lib/plugin.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "peer",
+    "mcp",
+    "remote",
+    "pairing"
+  ],
+  "engines": {
+    "node": ">=20.19"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-mcp-client": "*",
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-mcp-client": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "verify": "node scripts/verify-host-load.mjs",
+    "prepack": "node scripts/prepare-release.mjs"
+  }
+}

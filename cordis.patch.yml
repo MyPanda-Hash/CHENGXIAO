@@ -1,0 +1,26 @@
+# dsh-peer-mcp bundle patch.
+#
+# Composes the plugin as an ordinary Cordis row. `name` is the published package
+# name, resolved from whichever profile installed it — it has to match
+# package.json, or the host cannot load the plugin it just installed.
+#
+# Configuration lives here so the whole thing can be turned on with one overlay:
+#
+#   listen: false      -- the inbound listener stays off until an operator turns
+#                         it on. Installing this plugin exposes nothing.
+#   allowedDirs        -- absolute directories a paired peer may work inside.
+#                         With `listen: true` this must name at least one
+#                         directory: the schema refuses a listener that nothing
+#                         confines.
+#   host/port          -- where the listener binds when it is on. A wildcard
+#                         bind is what lets a peer on the same network connect;
+#                         the pairing code then advertises the best address this
+#                         machine actually has.
+- insert:
+    - id: dsh-peer-mcp
+      name: 'dsh-peer-mcp'
+      config:
+        listen: false
+        host: 0.0.0.0
+        port: 7331
+        taskTimeoutMs: 600000

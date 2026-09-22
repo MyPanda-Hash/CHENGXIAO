@@ -1,0 +1,15 @@
+# dsh-peer-mcp
+
+Development junctions and build output stay out of the repository: the plugin
+itself declares no runtime dependencies, and `node_modules/` here only wires the
+host's packages in for local test runs.
+
+node_modules/
+dist/
+*.log
+
+# Editor and OS noise.
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

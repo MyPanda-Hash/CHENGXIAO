@@ -1,0 +1,13 @@
+# Normalise line endings: the plugin ships to Windows and POSIX hosts alike, and
+# a mixed checkout would show spurious diffs in every tool that reads these files.
+* text=auto eol=lf
+
+# Windows launchers keep CRLF so they run without surprises.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets are left alone.
+*.png binary
+*.ico binary
+*.tgz binary
