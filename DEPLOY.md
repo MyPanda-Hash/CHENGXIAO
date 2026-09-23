@@ -14,6 +14,11 @@
 
 ## 一、装插件
 
+> ⚠️ **先确认那台机器在跑哪个 profile。** 下面的命令默认 `desktop`。
+> 若那台机器用的是 **web 端**，把每一处的 `desktop` 换成 `web`；用 headless 就换 `headless`。
+> 装错 profile 的表现是"照着做完了、完全没反应"——插件不会被加载，也不会报错。
+> 详见第五节"装错 profile"。
+
 把 `install-peer.ps1` 拷到目标机器，用**管理员或普通 PowerShell 均可**：
 
 ```powershell
@@ -129,7 +134,32 @@ Get-NetNeighbor -IPAddress 192.168.0.235 | Select-Object IPAddress, LinkLayerAdd
 |---|---|---|
 | 没有 DSH 进程 | DSH 没启动 | 先启动 DSH |
 | 有 DSH，但 7331 没在监听 | 插件没装/没启用，或 `listen` 还是 `false` | 见本文第一节、第二节；改完**必须重启** DSH |
+| 只绑在 `127.0.0.1` | `host` 写成了回环地址 | 本机连自己是通的，所以极易误判成"我这边没问题"。改成 `0.0.0.0` 再重启 |
 | 在监听，但对端仍连不上 | 防火墙 | 见下 |
+
+### 装错 profile（用 web 端 / headless 端时最常踩）
+
+DSH 每个 profile 有**各自独立**的 `node_modules` 和 `cordis.patch.yml`：
+
+```
+~/.dsh/profiles/desktop/    ← DSH Desktop 用这个
+~/.dsh/profiles/web/        ← web 端用这个
+~/.dsh/profiles/headless/   ← ask 派生的子任务用这个
+```
+
+**跑哪个 profile，就得往哪个 profile 装。** 用 web 端跑却把插件装在 `desktop`，
+插件根本不会被加载，自然也不会监听——但 `dsh plugin add` 不会提醒你这件事。
+
+判断当前在跑哪个：看 `~/.dsh/profiles/*/cordis.patch.yml` 里哪个提到了 `dsh-peer-mcp`，
+再和进程实际用的 profile 对上。
+
+日志里最直接的证据（`诊断配对问题.ps1` 第 6 步会自动找）：
+
+```
+[dsh-peer-mcp] peer service ready (listening=true)     ← 插件加载了，且在监听
+```
+
+这行**完全没有** = 插件没加载（大概率装错 profile 了）。
 
 ### 防火墙的两个坑
 
