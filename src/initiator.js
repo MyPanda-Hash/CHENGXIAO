@@ -63,6 +63,11 @@ export async function openInitiatorStore({ home, deviceName = hostname() }) {
     address: record.address,
     workerInstallId: record.workerInstallId,
     pairedAt: record.pairedAt,
+    // Relay routing for peers paired through a relay; the channel key stays
+    // sealed and is only opened by identify() at call time.
+    ...(record.relay !== undefined && {
+      relay: { url: record.relay.url, deviceId: record.relay.deviceId },
+    }),
   });
 
   return {
@@ -82,10 +87,18 @@ export async function openInitiatorStore({ home, deviceName = hostname() }) {
           `the stored credential for ${name} cannot be opened; re-pair that worker`,
         );
       }
-      return { ...toPublicPeer(record), credential };
+      // A relay peer also carries the end-to-end channel key, sealed like the
+      // credential so a copied file carries no usable secret.
+      const channelKey =
+        record.relay?.sealedChannelKey !== undefined ? openSealed(key, record.relay.sealedChannelKey) : undefined;
+      return {
+        ...toPublicPeer(record),
+        credential,
+        ...(channelKey !== undefined && { channelKey }),
+      };
     },
 
-    async addPeer({ credential, address, name, workerInstallId }) {
+    async addPeer({ credential, address, name, workerInstallId, relay }) {
       const record = {
         id: randomUUID(),
         name,
@@ -93,6 +106,13 @@ export async function openInitiatorStore({ home, deviceName = hostname() }) {
         sealedCredential: seal(key, credential),
         ...(workerInstallId !== undefined && { workerInstallId }),
         pairedAt: new Date().toISOString(),
+        ...(relay !== undefined && {
+          relay: {
+            url: relay.url,
+            deviceId: relay.deviceId,
+            sealedChannelKey: seal(key, relay.channelKey),
+          },
+        }),
       };
 
       // Re-pairing the same worker replaces its record: two entries for one

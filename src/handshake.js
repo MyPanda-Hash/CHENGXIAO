@@ -79,10 +79,11 @@ export function createPairThrottle({ maxFailures = 5 } = {}) {
  *   trust: { identity: { installId: string }, addPeer: (input: object) => Promise<{ peer: object, credential: string }> },
  *   pairing: { consume: (code: string, claim: object) => Promise<object> },
  *   throttle?: ReturnType<typeof createPairThrottle>,
+ *   peerFields?: object,
  * }} input - one handshake attempt.
  * @returns {Promise<{ status: number, body: object }>} the HTTP answer.
  */
-export async function handlePair({ body, address, source, trust, pairing, throttle }) {
+export async function handlePair({ body, address, source, trust, pairing, throttle, peerFields }) {
   if (source !== undefined && throttle?.blocked(source) === true) {
     return {
       status: STATUS.throttled,
@@ -112,11 +113,14 @@ export async function handlePair({ body, address, source, trust, pairing, thrott
   }
 
   // The preset is the operator's grant, carried by the ticket. A request body
-  // that names a policy was already ignored by validation above.
+  // that names a policy was already ignored by validation above. `peerFields`
+  // is caller-side data (never request data) the record should carry, such as
+  // the relay channel key for peers paired through a relay.
   const { peer, credential } = await trust.addPeer({
     name: claim.name.trim(),
     publicKey: claim.publicKey,
     policy: consumed.policy ?? DEFAULT_PEER_POLICY,
+    ...(peerFields !== undefined && { ...peerFields }),
   });
 
   if (source !== undefined) throttle?.clear(source);

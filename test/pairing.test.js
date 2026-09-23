@@ -137,7 +137,9 @@ test('listing pending codes never reveals the secret', async () => {
 
   const [listed] = store.listPending();
 
-  assert.deepEqual(Object.keys(listed).sort(), ['address', 'createdAt', 'expiresAt', 'id', 'link']);
+  // `scheme` is routing metadata (dshp vs dshr), not a secret; the code and
+  // its hash must remain the only things a listing never carries.
+  assert.deepEqual(Object.keys(listed).sort(), ['address', 'createdAt', 'expiresAt', 'id', 'link', 'scheme']);
   assert.equal(JSON.stringify(listed).includes(ticket.code), false, 'the secret lives only in the create() result');
   assert.match(listed.link, /^dshp:\/\/10\.0\.0\.5:7331\/(?:•+)?$/u, 'a listing may show the address but not the code');
 });

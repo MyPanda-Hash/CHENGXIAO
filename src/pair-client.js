@@ -9,8 +9,9 @@
  * neither of them should look like a crash or leave a half-saved peer behind.
  */
 
-/** Scheme a pairing link must use. */
+/** Schemes a pairing link may use: direct (`dshp:`) or via a relay (`dshr:`). */
 const LINK_SCHEME = 'dshp:';
+const RELAY_LINK_SCHEME = 'dshr:';
 
 /** How long to wait for a worker to answer before calling it unreachable. */
 export const PAIR_TIMEOUT_MS = 20_000;
@@ -27,8 +28,8 @@ class PairLinkError extends Error {
 /**
  * Parse the link an operator pasted.
  *
- * @param {string} link - the `dshp://host:port/CODE` link.
- * @returns {{ address: string, code: string, origin: string }} the parts.
+ * @param {string} link - the `dshp://host:port/CODE` or `dshr://relay-host/DEVICE/CODE` link.
+ * @returns {{ scheme: string, address: string, code: string, origin: string } | { scheme: string, relayAddress: string, deviceId: string, code: string, origin: string }} the parts.
  * @throws {PairLinkError} when the link cannot be used.
  */
 export function parsePairLink(link) {
@@ -43,8 +44,24 @@ export function parsePairLink(link) {
     throw new PairLinkError('link-malformed', `${link} is not a URL`);
   }
 
+  if (url.protocol === RELAY_LINK_SCHEME) {
+    const segments = url.pathname.replace(/^\/+/u, '').split('/').filter((part) => part !== '');
+    const deviceId = segments[0] ?? '';
+    const code = segments.slice(1).join('/');
+    if (url.host === '') {
+      throw new PairLinkError('link-address-missing', 'the relay pairing link names no relay');
+    }
+    if (deviceId === '') {
+      throw new PairLinkError('link-device-missing', 'the relay pairing link carries no device id');
+    }
+    if (code === '') {
+      throw new PairLinkError('link-code-missing', 'the pairing link carries no code');
+    }
+    return { scheme: 'dshr', relayAddress: url.host, deviceId, code, origin: `http://${url.host}` };
+  }
+
   if (url.protocol !== LINK_SCHEME) {
-    throw new PairLinkError('link-scheme', `a pairing link starts with ${LINK_SCHEME}// , got ${url.protocol}//`);
+    throw new PairLinkError('link-scheme', `a pairing link starts with ${LINK_SCHEME}// or ${RELAY_LINK_SCHEME}// , got ${url.protocol}//`);
   }
 
   const address = url.host;
@@ -57,7 +74,7 @@ export function parsePairLink(link) {
     throw new PairLinkError('link-code-missing', 'the pairing link carries no code');
   }
 
-  return { address, code, origin: `http://${address}` };
+  return { scheme: 'dshp', address, code, origin: `http://${address}` };
 }
 
 /**

@@ -57,7 +57,7 @@ export async function openPairingStore({ home, now = () => new Date() }) {
   if (state.pending.length === 0 && state.spent.length === 0) await persist(path, state);
 
   return {
-    async create({ address, ttlMs = DEFAULT_CODE_TTL_MS, policy }) {
+    async create({ address, ttlMs = DEFAULT_CODE_TTL_MS, policy, scheme = 'dshp' }) {
       const createdAt = now();
       const code = mintCode();
       // Only derived values are persisted: the code itself and the link that
@@ -67,6 +67,7 @@ export async function openPairingStore({ home, now = () => new Date() }) {
         id: randomUUID(),
         codeHash: hash(code),
         address,
+        scheme,
         createdAt: createdAt.toISOString(),
         expiresAt: new Date(createdAt.getTime() + ttlMs).toISOString(),
         ...(policy !== undefined && { policy: { ...policy } }),
@@ -77,14 +78,14 @@ export async function openPairingStore({ home, now = () => new Date() }) {
       state.pending = [record];
       await persist(path, state);
 
-      return { ...record, code, link: `dshp://${address}/${code}` };
+      return { ...record, code, link: `${scheme}://${address}/${code}` };
     },
 
     listPending() {
       sweep(state, now());
       return state.pending.map(({ codeHash: _ignored, ...safe }) => ({
         ...safe,
-        link: `dshp://${safe.address}/`,
+        link: `${safe.scheme ?? 'dshp'}://${safe.address}/`,
       }));
     },
 

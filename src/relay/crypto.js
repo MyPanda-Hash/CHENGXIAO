@@ -43,13 +43,20 @@ export function generateKeyPair() {
   };
 }
 
-/** Derive a shared 32-byte session key from one side's private key and the peer's public key. */
-export function deriveSessionKey({ privateKey, peerPublicKey }) {
+/**
+ * Derive a shared 32-byte session key from one side's private key and the
+ * peer's public key. `domain` separates keys derived for different purposes
+ * (handshake sealing vs the durable message channel) from the same secret.
+ *
+ * @param {{ privateKey: Buffer, peerPublicKey: Buffer, domain?: string }} input - the key halves.
+ * @returns {Buffer} the 32-byte derived key.
+ */
+export function deriveSessionKey({ privateKey, peerPublicKey, domain = 'handshake' }) {
   const shared = diffieHellman({
     privateKey: privateKeyFromRaw(privateKey),
     publicKey: publicKeyFromRaw(peerPublicKey),
   });
-  return createHash('sha256').update(HKDF_SALT).update(shared).digest().subarray(0, SESSION_BYTES);
+  return createHash('sha256').update(HKDF_SALT).update(domain).update(shared).digest().subarray(0, SESSION_BYTES);
 }
 
 /** Encode a raw buffer as base64url. */

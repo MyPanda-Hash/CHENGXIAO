@@ -1,12 +1,15 @@
+import { randomBytes } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 import { openTrustStore } from './trust.js';
 import { openPairingStore } from './pairing.js';
 import { openInitiatorStore } from './initiator.js';
-import { pairWith, parsePairLink } from './pair-client.js';
+import { pairWith, parsePairLink, PAIR_TIMEOUT_MS } from './pair-client.js';
 import { createVerifier } from './auth.js';
 import { createPeerMounts } from './mounts.js';
 import { createPairThrottle, handlePair } from './handshake.js';
 import { startAdapter } from './server.js';
+import { createRelayClient } from './relay/client.js';
+import { generateKeyPair, deriveSessionKey, seal, open, encodeKey, parseKey } from './relay/crypto.js';
 import { defaultWorkspace } from './config.js';
 
 export const DEFAULT_CAPABILITIES = Object.freeze({
@@ -160,6 +163,7 @@ export async function createPeerService({
   mountContext,
   toolCallTimeoutMs,
   addresses,
+  relay,
   log = () => {},
 }) {
   const trust = await openTrustStore({ home });
@@ -173,10 +177,195 @@ export async function createPeerService({
   let advertised;
   let pending;
 
+  // One throttle for both ingress paths (direct HTTP and relay), so failure
+  // counts accumulate across them instead of resetting per path.
+  const throttle = createPairThrottle();
+
+  // The relay connection: an outbound client that makes this machine reachable
+  // without opening any inbound port. Registration happens during service
+  // creation so a relay that cannot be reached fails loudly, not silently.
+  let relayClient;
+  let relayHostPort;
+  let relayDeviceId;
+  if (relay?.enabled === true) {
+    relayDeviceId = relay.deviceId ?? trust.identity.installId;
+    relayHostPort = new URL(relay.url).host;
+    relayClient = createRelayClient({ url: relay.url, deviceId: relayDeviceId });
+    try {
+      await relayClient.register();
+    } catch (cause) {
+      await relayClient.stop().catch(() => {});
+      throw new ServiceError(
+        cause.code ?? 'relay-unreachable',
+        `cannot register with the relay at ${relay.url}: ${cause.message}`,
+      );
+    }
+    relayClient.onMessage((envelope) => void handleRelayEnvelope(envelope));
+    log(`relay registered: ${relay.url} as ${relayDeviceId}`);
+  }
+
+  /**
+   * Answer one inbound relay envelope. Only pair-requests exist in this
+   * phase; the worker side of the handshake runs the same handlePair logic
+   * the direct HTTP path uses, then seals the answer so the relay never sees
+   * the credential inside it.
+   *
+   * @param {object} envelope - the relay envelope.
+   * @returns {Promise<void>}
+   */
+  async function handleRelayEnvelope(envelope) {
+    if (envelope.kind !== 'pair-request') return;
+    const respond = async (responseBody) => {
+      try {
+        await relayClient.send({ to: envelope.from, from: relayDeviceId, kind: 'response', id: envelope.id, body: responseBody });
+      } catch (cause) {
+        log(`relay pair response failed: ${cause?.message ?? String(cause)}`);
+      }
+    };
+
+    const body = envelope.body ?? {};
+    if (typeof body?.e2ePublicKey !== 'string' || body.e2ePublicKey === '') {
+      await respond({ status: 400, error: 'e2e-key-missing' });
+      return;
+    }
+
+    let peerPublic;
+    try {
+      peerPublic = parseKey(body.e2ePublicKey);
+    } catch {
+      await respond({ status: 400, error: 'e2e-key-missing' });
+      return;
+    }
+
+    // An ephemeral key pair per request: the handshake key seals this one
+    // answer, the channel key seals every later relay message with this peer.
+    const ephemeral = generateKeyPair();
+    const handshakeKey = deriveSessionKey({ privateKey: ephemeral.privateKey, peerPublicKey: peerPublic });
+    const channelKey = deriveSessionKey({ privateKey: ephemeral.privateKey, peerPublicKey: peerPublic, domain: 'channel' });
+
+    const answer = await handlePair({
+      body: { code: body.code, name: body.name, publicKey: body.publicKey },
+      address: `${relayHostPort}/${relayDeviceId}`,
+      source: envelope.from,
+      trust,
+      pairing,
+      throttle,
+      peerFields: { channelKey: channelKey.toString('base64url') },
+    });
+
+    await respond({
+      status: answer.status,
+      e2ePublicKey: encodeKey(ephemeral.publicKey),
+      sealed: seal({ key: handshakeKey, plaintext: JSON.stringify(answer.body) }),
+    });
+  }
+
+  /**
+   * Claim one dshr:// pairing link through the relay it names.
+   *
+   * The handshake is one request/response exchange over the relay. The pairing
+   * answer — which carries the long-lived credential — is sealed with a key
+   * derived from an ephemeral X25519 exchange, so the relay forwarding it never
+   * holds a usable secret. A durable channel key derived from the same exchange
+   * is stored on both sides for sealing later relay traffic.
+   *
+   * @param {{ relayAddress: string, deviceId: string, code: string, origin: string }} parsed - the link parts.
+   * @returns {Promise<{ ok: true, peer: object, worker: object } | { ok: false, code: string, detail: string }>} the outcome.
+   */
+  async function relayPair(parsed) {
+    // Prefer this service's own relay connection; an initiator without one
+    // registers an ephemeral client against the relay the link names.
+    let client = relayClient;
+    let ephemeralClient;
+    if (client === undefined) {
+      ephemeralClient = createRelayClient({
+        url: parsed.origin,
+        deviceId: `eph-${randomBytes(9).toString('base64url')}`,
+      });
+      client = ephemeralClient;
+    }
+
+    const keyPair = generateKeyPair();
+    let response;
+    try {
+      try {
+        if (ephemeralClient !== undefined) await ephemeralClient.register();
+        response = await client.request({
+          to: parsed.deviceId,
+          kind: 'pair-request',
+          body: {
+            code: parsed.code,
+            name: initiator.identity.deviceName,
+            publicKey: initiator.identity.publicKey,
+            e2ePublicKey: encodeKey(keyPair.publicKey),
+          },
+          timeoutMs: PAIR_TIMEOUT_MS,
+        });
+      } catch (cause) {
+        return {
+          ok: false,
+          code: cause.code === 'relay-request-timeout' ? 'pairing-timeout' : (cause.code ?? 'worker-unreachable'),
+          detail: `the relay pairing with ${parsed.relayAddress}/${parsed.deviceId} failed: ${cause.message}`,
+        };
+      }
+    } finally {
+      if (ephemeralClient !== undefined) await ephemeralClient.stop().catch(() => {});
+    }
+
+    if (response.error !== undefined) {
+      return {
+        ok: false,
+        code: String(response.error),
+        detail: 'the worker refused the relay pairing before any key was exchanged',
+      };
+    }
+    if (typeof response.e2ePublicKey !== 'string' || typeof response.sealed !== 'string') {
+      return { ok: false, code: 'pair-response-malformed', detail: 'the relay pairing answer was not sealed correctly' };
+    }
+
+    const workerPublic = parseKey(response.e2ePublicKey);
+    const handshakeKey = deriveSessionKey({ privateKey: keyPair.privateKey, peerPublicKey: workerPublic });
+    const opened = open({ key: handshakeKey, sealed: response.sealed });
+    if (opened === undefined) {
+      return {
+        ok: false,
+        code: 'pair-response-unopenable',
+        detail: 'the sealed pairing answer could not be authenticated',
+      };
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(opened);
+    } catch {
+      return { ok: false, code: 'pair-response-malformed', detail: 'the sealed pairing answer was not valid JSON' };
+    }
+
+    if (response.status !== 201 || payload?.ok !== true) {
+      return {
+        ok: false,
+        code: typeof payload?.code === 'string' ? payload.code : `worker-http-${String(response.status)}`,
+        detail: typeof payload?.detail === 'string' ? payload.detail : 'the worker refused this pairing',
+      };
+    }
+
+    const channelKey = deriveSessionKey({
+      privateKey: keyPair.privateKey,
+      peerPublicKey: workerPublic,
+      domain: 'channel',
+    });
+    const peer = await initiator.addPeer({
+      credential: payload.credential,
+      address: `${parsed.relayAddress}/${parsed.deviceId}`,
+      name: initiator.identity.deviceName,
+      ...(payload.worker?.installId !== undefined && { workerInstallId: payload.worker.installId }),
+      relay: { url: parsed.origin, deviceId: parsed.deviceId, channelKey: channelKey.toString('base64url') },
+    });
+
+    return { ok: true, peer, worker: payload.worker ?? {} };
+  }
+
   if (listen) {
-    // Built once per service so failure counts survive across requests — a
-    // throttle constructed per request would count every attempt as the first.
-    const throttle = createPairThrottle();
     adapter = await startAdapter({
       verifier: createVerifier({ trust }),
       executor,
@@ -241,6 +430,13 @@ export async function createPeerService({
       const bound = adapter === undefined ? undefined : `${advertiseHost()}:${String(adapter.port)}`;
       return {
         listening: adapter !== undefined,
+        // How peers reach this machine: the direct listener wins when both are
+        // on, because a LAN hop beats a relay hop; the relay is the fallback
+        // that needs no inbound port at all.
+        connection: adapter !== undefined ? 'lan' : relayClient !== undefined ? 'relay' : 'off',
+        ...(relay !== undefined && {
+          relay: { enabled: relay.enabled === true, online: relayClient !== undefined, url: relay.url },
+        }),
         ...(adapter !== undefined && { url: `http://${advertiseHost()}:${String(adapter.port)}/mcp` }),
         ...(bound !== undefined && { address: bound }),
         installId: trust.identity.installId,
@@ -256,6 +452,7 @@ export async function createPeerService({
           address: peer.address,
           pairedAt: peer.pairedAt,
           ...(peer.workerInstallId !== undefined && { workerInstallId: peer.workerInstallId }),
+          ...(peer.relay !== undefined && { relay: peer.relay }),
         })),
         trustedBy: trustedBy.map((peer) => ({
           id: peer.id,
@@ -278,14 +475,18 @@ export async function createPeerService({
     },
 
     async createTicket({ policy, ttlMs } = {}) {
-      if (adapter === undefined) {
+      if (adapter === undefined && relayClient === undefined) {
         throw new ServiceError(
           'listener-off',
-          'turn the inbound listener on before issuing a pairing code, or nobody can reach this machine',
+          'turn the inbound listener or the relay on before issuing a pairing code, or nobody can reach this machine',
         );
       }
+      // A direct listener is the better address when it exists; the relay link
+      // is what makes a machine behind NAT pairable at all.
+      const viaRelay = adapter === undefined;
       const ticket = await pairing.create({
-        address: `${advertiseHost()}:${String(adapter.port)}`,
+        address: viaRelay ? `${relayHostPort}/${relayDeviceId}` : `${advertiseHost()}:${String(adapter.port)}`,
+        scheme: viaRelay ? 'dshr' : 'dshp',
         ...(policy !== undefined && { policy }),
         ...(ttlMs !== undefined && { ttlMs }),
       });
@@ -297,12 +498,15 @@ export async function createPeerService({
 
     async pair({ link }) {
       const parsed = parsePairLink(link);
-      const outcome = await pairWith({
-        link: parsed,
-        deviceName: initiator.identity.deviceName,
-        identity: initiator.identity,
-        store: initiator,
-      });
+      const outcome =
+        parsed.scheme === 'dshr'
+          ? await relayPair(parsed)
+          : await pairWith({
+              link: parsed,
+              deviceName: initiator.identity.deviceName,
+              identity: initiator.identity,
+              store: initiator,
+            });
 
       // The handshake and the mount are separate outcomes. Reporting a mount
       // failure as "pairing failed" would be untrue — the other machine already
@@ -311,11 +515,17 @@ export async function createPeerService({
         // The return value reaches only whoever called the tool. Once the
         // operator has moved on and is reading the log to find out what went
         // wrong, an unlogged failure is indistinguishable from no attempt.
-        log(`pairing with ${parsed.address} failed: ${outcome.code}`);
+        const where = parsed.scheme === 'dshr' ? `${parsed.relayAddress}/${parsed.deviceId}` : parsed.address;
+        log(`pairing with ${where} failed: ${outcome.code}`);
         return outcome;
       }
       if (mounts === undefined) {
         return { ...outcome, mounted: false, mountError: { code: 'mounting-unavailable' } };
+      }
+      // A relay peer is not mounted over the direct transport; driving it
+      // through the relay arrives with relay task execution.
+      if (outcome.peer?.relay !== undefined) {
+        return { ...outcome, mounted: false, mountError: { code: 'relay-mount-pending' } };
       }
 
       try {
@@ -365,6 +575,7 @@ export async function createPeerService({
 
     async stop() {
       if (adapter !== undefined) await adapter.close();
+      if (relayClient !== undefined) await relayClient.stop();
     },
   };
 }
