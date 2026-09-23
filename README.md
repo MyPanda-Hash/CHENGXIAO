@@ -21,23 +21,30 @@
 dsh plugin --profile <你的 profile> add github:MyPanda-Hash/CHENGXIAO
 ```
 
-装完后在 profile 的 `cordis.patch.yml` 里加一行（本仓库的 `cordis.patch.yml` 有逐项注释）：
+这一条命令就够了：它会把插件装进 profile 的 `node_modules/`，**并自动注册到
+`dsh.profile.bundles`**（你可以打开 profile 的 `package.json` 确认）。
+
+装完后**安装本身不会对外暴露任何东西** —— 插件自带的 `cordis.patch.yml` 里 `listen` 默认是
+`false`，必须由操作者显式开启。
+
+### 配置
+
+配置写在 **profile 的 patch 层**（`~/.dsh/profiles/<profile>/cordis.patch.yml`），
+**不要改插件包里的文件** —— 那个文件属于插件，升级时会被覆盖。加一条 id 定向覆盖即可：
 
 ```yaml
-- insert:
-    - id: dsh-peer-mcp
-      name: 'dsh-peer-mcp'
-      config:
-        listen: true                                  # 本机对外监听，对端才能配对
-        host: 0.0.0.0
-        port: 7331
-        allowedDirs:                                  # 对端被允许进入的绝对目录
-          - 'C:\work'
-        taskTimeoutMs: 600000
+- id: dsh-peer-mcp
+  config:
+    listen: true                                  # 本机对外监听，对端才能配对
+    host: 0.0.0.0
+    port: 7331
+    allowedDirs:                                  # 对端被允许进入的绝对目录
+      - 'C:\work'
+    taskTimeoutMs: 600000
 ```
 
-重启 DSH 生效。**安装本身不会对外暴露任何东西** —— `listen` 默认是 `false`，
-必须由操作者显式开启。
+`listen: true` 时 `allowedDirs` **必须至少给一个绝对目录** —— schema 会拒绝一个
+"没边界的监听口"。改完重启 DSH 生效。
 
 ## 配对（一次性码）
 
