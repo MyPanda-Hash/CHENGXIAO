@@ -106,7 +106,7 @@ export async function openTrustStore({ home }) {
       return { ...peer };
     },
 
-    async addPeer({ name, publicKey, policy = DEFAULT_PEER_POLICY, channelKey }) {
+    async addPeer({ name, publicKey, policy = DEFAULT_PEER_POLICY, channelKey, relayDeviceId }) {
       const credential = randomBytes(CREDENTIAL_BYTES).toString('base64url');
       const peer = {
         id: randomUUID(),
@@ -115,9 +115,11 @@ export async function openTrustStore({ home }) {
         keyHash: hashCredential(credential),
         policy: { ...policy },
         pairedAt: new Date().toISOString(),
-        // The relay message channel key, present only for peers paired over a
-        // relay; both sides need it to seal and open relay traffic end to end.
+        // The relay message channel key and the peer's relay device id, present
+        // only for peers paired over a relay; the worker needs both to open
+        // sealed relay traffic from that peer.
         ...(typeof channelKey === 'string' && { channelKey }),
+        ...(typeof relayDeviceId === 'string' && { relayDeviceId }),
       };
 
       state.peers.push(peer);

@@ -38,6 +38,21 @@ function disposerOf(mounted) {
 }
 
 /**
+ * Compose a mount disposer with a relay endpoint release, so unmounting a
+ * relay peer takes its loopback proxy down with it.
+ *
+ * @param {() => void} dispose - the mount's own disposer.
+ * @param {() => Promise<void>} release - the relay endpoint release.
+ * @returns {() => void} the composed disposer.
+ */
+function composeDisposers(dispose, release) {
+  return () => {
+    dispose();
+    void release().catch(() => {});
+  };
+}
+
+/**
  * Create the peer mount manager for one plugin instance.
  *
  * Clients are keyed by peer **name**, not by record id: re-pairing replaces the
@@ -45,17 +60,25 @@ function disposerOf(mounted) {
  * and what the tool names are derived from. Keying by id would leave the
  * superseded client connected forever, holding a credential that was rotated.
  *
+ * A peer paired through a relay is mounted the same way — same MCP client,
+ * same credential header — except its URL is a loopback proxy that carries
+ * the traffic across the relay. `relayEndpointFor` is what opens that proxy;
+ * without it relay peers cannot mount, because dialing their recorded
+ * address directly would miss the relay hop entirely.
+ *
  * @param {{
  *   ctx: { plugin: (module: object, config: object) => Promise<unknown>, effect: (setup: () => (() => void) | void) => void },
  *   store: { listPeers: () => object[], identify: (name: string) => object | undefined },
  *   mcp: object,
- * }} deps - the plugin context, the initiator store, and the MCP client module.
+ *   relayEndpointFor?: (name: string) => Promise<{ url: string, authorization: string, close: () => Promise<void> }>,
+ *   toolCallTimeoutMs?: number,
+ * }} deps - the plugin context, the initiator store, the MCP client module, and an optional relay endpoint factory.
  * @returns {{
  *   mountAll: () => Promise<{ mounted: string[], alreadyMounted: string[], failed: object[] }>,
  *   unmount: (nameOrId: string) => Promise<void>,
  * }} the manager.
  */
-export function createPeerMounts({ ctx, store, mcp, toolCallTimeoutMs }) {
+export function createPeerMounts({ ctx, store, mcp, relayEndpointFor, toolCallTimeoutMs }) {
   /** Peer name → its disposer. Presence here is what "mounted" means. */
   const live = new Map();
 
@@ -98,13 +121,34 @@ export function createPeerMounts({ ctx, store, mcp, toolCallTimeoutMs }) {
           continue;
         }
 
+        // A relay peer mounts against a loopback proxy that hides the relay
+        // hop; a direct peer mounts against its recorded address.
+        let url = `http://${peer.address}${MCP_PATH}`;
+        let headers = { authorization: `Bearer ${withCredential.credential}` };
+        let releaseRelay;
+        if (withCredential.relay !== undefined) {
+          if (relayEndpointFor === undefined) {
+            failed.push({ name: peer.name, code: 'relay-mount-unavailable' });
+            continue;
+          }
+          try {
+            const endpoint = await relayEndpointFor(peer.name);
+            url = endpoint.url;
+            headers = { authorization: endpoint.authorization };
+            releaseRelay = endpoint.close;
+          } catch (cause) {
+            failed.push({ name: peer.name, code: typeof cause?.code === 'string' ? cause.code : 'relay-mount-failed' });
+            continue;
+          }
+        }
+
         // The module namespace is the first argument; there is no `plugin`
         // property on the MCP client module to call.
         const mountedPeer = await ctx.plugin(mcp, {
           transport: 'streamable-http',
           serverName: peer.name,
-          url: `http://${peer.address}${MCP_PATH}`,
-          headers: { authorization: `Bearer ${withCredential.credential}` },
+          url,
+          headers,
           // An ask may legitimately run for as long as the worker's task
           // timeout allows, while the client library's own default cap is one
           // minute. Without this, a task that outlives the cap is reported as
@@ -113,7 +157,8 @@ export function createPeerMounts({ ctx, store, mcp, toolCallTimeoutMs }) {
           ...(toolCallTimeoutMs !== undefined && { toolCallTimeoutMs }),
         });
 
-        live.set(peer.name, disposerOf(mountedPeer));
+        const dispose = disposerOf(mountedPeer);
+        live.set(peer.name, releaseRelay !== undefined ? composeDisposers(dispose, releaseRelay) : dispose);
         mounted.push(peer.name);
       }
 

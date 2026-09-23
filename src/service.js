@@ -9,6 +9,7 @@ import { createPeerMounts } from './mounts.js';
 import { createPairThrottle, handlePair } from './handshake.js';
 import { startAdapter } from './server.js';
 import { createRelayClient } from './relay/client.js';
+import { createRelayProxy } from './relay/proxy.js';
 import { generateKeyPair, deriveSessionKey, seal, open, encodeKey, parseKey } from './relay/crypto.js';
 import { defaultWorkspace } from './config.js';
 
@@ -214,6 +215,10 @@ export async function createPeerService({
    * @returns {Promise<void>}
    */
   async function handleRelayEnvelope(envelope) {
+    if (envelope.kind === 'http-request') {
+      await handleRelayHttpRequest(envelope);
+      return;
+    }
     if (envelope.kind !== 'pair-request') return;
     const respond = async (responseBody) => {
       try {
@@ -250,7 +255,7 @@ export async function createPeerService({
       trust,
       pairing,
       throttle,
-      peerFields: { channelKey: channelKey.toString('base64url') },
+      peerFields: { channelKey: channelKey.toString('base64url'), relayDeviceId: envelope.from },
     });
 
     await respond({
@@ -258,6 +263,87 @@ export async function createPeerService({
       e2ePublicKey: encodeKey(ephemeral.publicKey),
       sealed: seal({ key: handshakeKey, plaintext: JSON.stringify(answer.body) }),
     });
+  }
+
+  /**
+   * Replay one sealed HTTP request against this machine's own loopback
+   * adapter, and seal the answer back.
+   *
+   * The channel key comes from the paired peer the request claims to be, so an
+   * unpaired or revoked device gets nothing opened — and the relay forwards
+   * ciphertext only, credentials included. Replaying against the real adapter
+   * means the relay path exercises the same auth, policy and tool dispatch as
+   * the direct path, with nothing reimplemented here.
+   *
+   * @param {object} envelope - the http-request envelope.
+   * @returns {Promise<void>}
+   */
+  async function handleRelayHttpRequest(envelope) {
+    const respond = async (responseBody) => {
+      try {
+        await relayClient.send({ to: envelope.from, from: relayDeviceId, kind: 'response', id: envelope.id, body: responseBody });
+      } catch (cause) {
+        log(`relay http response failed: ${cause?.message ?? String(cause)}`);
+      }
+    };
+
+    const peer = trust
+      .listPeers()
+      .find((entry) => entry.relayDeviceId === envelope.from && entry.revokedAt === undefined);
+    if (peer?.channelKey === undefined) {
+      await respond({ error: 'peer-unknown-relay' });
+      return;
+    }
+
+    const body = envelope.body ?? {};
+    if (typeof body.sealed !== 'string') {
+      await respond({ error: 'request-unopenable' });
+      return;
+    }
+    const channelKey = parseKey(peer.channelKey);
+    const opened = open({ key: channelKey, sealed: body.sealed });
+    if (opened === undefined) {
+      await respond({ error: 'request-unopenable' });
+      return;
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(opened);
+    } catch {
+      await respond({ error: 'request-unopenable' });
+      return;
+    }
+
+    try {
+      const replay = await fetch(`${replayOrigin()}${String(body.path ?? '/')}`, {
+        method: String(body.method ?? 'GET'),
+        headers: payload.headers ?? {},
+        ...(payload.bodyBase64 !== undefined &&
+          payload.bodyBase64 !== '' && { body: Buffer.from(payload.bodyBase64, 'base64') }),
+      });
+      // A fetch Headers instance has no own enumerable properties; spreading
+      // it yields {}, which would strip the content-type the MCP client checks.
+      const responseHeaders = Object.fromEntries(replay.headers);
+      delete responseHeaders['transfer-encoding'];
+      delete responseHeaders['content-length'];
+      const responseBuffer = Buffer.from(await replay.arrayBuffer());
+
+      await respond({
+        status: replay.status,
+        sealed: seal({
+          key: channelKey,
+          plaintext: JSON.stringify({
+            status: replay.status,
+            headers: responseHeaders,
+            bodyBase64: responseBuffer.toString('base64'),
+          }),
+        }),
+      });
+    } catch (cause) {
+      log(`relay replay failed: ${cause?.message ?? String(cause)}`);
+      await respond({ error: 'replay-failed' });
+    }
   }
 
   /**
@@ -419,10 +505,95 @@ export async function createPeerService({
     return advertised ?? '127.0.0.1';
   }
 
+  // The relay replay target: a loopback-only adapter that sealed relay
+  // requests are replayed against. When the direct listener exists it already
+  // serves loopback; otherwise a dedicated one is started, which exposes
+  // nothing to the network (127.0.0.1 only).
+  let replayAdapter;
+  if (relayClient !== undefined && adapter === undefined) {
+    replayAdapter = await startAdapter({
+      verifier: createVerifier({ trust }),
+      executor,
+      stagingDir: `${home}/dsh-peer/incoming`,
+      allowedDirs: allowedDirs ?? [process.cwd()],
+      defaultCwd: process.cwd(),
+      ...(maxBytes !== undefined && { maxBytes }),
+      host: '127.0.0.1',
+      port: 0,
+      log,
+    });
+  }
+
+  /** The loopback base URL relay requests are replayed against. */
+  function replayOrigin() {
+    const serving = adapter ?? replayAdapter;
+    if (serving === undefined) {
+      throw new ServiceError('replay-unavailable', 'no adapter is running to replay relay requests against');
+    }
+    return `http://127.0.0.1:${String(serving.port)}`;
+  }
+
+  /** Open relay endpoints by peer name, so repeated mounts share one proxy. */
+  const relayEndpoints = new Map();
+
+  /**
+   * A loopback HTTP endpoint that drives one relay-paired worker.
+   *
+   * The host's MCP client only speaks HTTP to a URL, so the relay hop hides
+   * behind a loopback proxy: requests are sealed with the pairing-time channel
+   * key and carried across the relay, where the worker replays them against
+   * its own adapter. One endpoint per peer; closing it releases the proxy.
+   *
+   * @param {string} name - the paired worker's name.
+   * @returns {Promise<{ url: string, authorization: string, close: () => Promise<void> }>} the endpoint.
+   */
+  async function openRelayEndpoint(name) {
+    const existing = relayEndpoints.get(name);
+    if (existing !== undefined) return existing;
+
+    const peer = initiator.identify(name);
+    if (peer === undefined) throw new ServiceError('worker-unknown', `no paired worker named ${name}`);
+    if (peer.relay === undefined || peer.channelKey === undefined) {
+      throw new ServiceError('peer-not-relay', `${name} was not paired through a relay`);
+    }
+    if (relayClient === undefined) {
+      throw new ServiceError('relay-off', 'this machine has no relay connection open');
+    }
+
+    const endpoint = {
+      url: '',
+      authorization: `Bearer ${peer.credential}`,
+      proxy: undefined,
+      async close() {
+        if (relayEndpoints.get(name) !== endpoint) return;
+        relayEndpoints.delete(name);
+        await endpoint.proxy?.close().catch(() => {});
+      },
+    };
+    relayEndpoints.set(name, endpoint);
+
+    const proxy = await createRelayProxy({
+      relayClient,
+      to: peer.relay.deviceId,
+      channelKey: parseKey(peer.channelKey),
+      ...(toolCallTimeoutMs !== undefined && { timeoutMs: toolCallTimeoutMs }),
+      log,
+    });
+    endpoint.proxy = proxy;
+    endpoint.url = proxy.url;
+    return endpoint;
+  }
+
   const mounts =
     mcp === undefined || mountContext === undefined
       ? undefined
-      : createPeerMounts({ ctx: mountContext, store: initiator, mcp, toolCallTimeoutMs });
+      : createPeerMounts({
+          ctx: mountContext,
+          store: initiator,
+          mcp,
+          toolCallTimeoutMs,
+          ...(relayClient !== undefined && { relayEndpointFor: (name) => openRelayEndpoint(name) }),
+        });
 
   return {
     status() {
@@ -522,11 +693,6 @@ export async function createPeerService({
       if (mounts === undefined) {
         return { ...outcome, mounted: false, mountError: { code: 'mounting-unavailable' } };
       }
-      // A relay peer is not mounted over the direct transport; driving it
-      // through the relay arrives with relay task execution.
-      if (outcome.peer?.relay !== undefined) {
-        return { ...outcome, mounted: false, mountError: { code: 'relay-mount-pending' } };
-      }
 
       try {
         // Re-pairing replaces the credential, so the old client must go first.
@@ -557,6 +723,8 @@ export async function createPeerService({
       return peer.credential;
     },
 
+    openRelayEndpoint,
+
     async mountPeers() {
       if (mounts === undefined) {
         return { mounted: [], alreadyMounted: [], failed: [], code: 'mounting-unavailable' };
@@ -575,6 +743,9 @@ export async function createPeerService({
 
     async stop() {
       if (adapter !== undefined) await adapter.close();
+      if (replayAdapter !== undefined) await replayAdapter.close();
+      for (const endpoint of relayEndpoints.values()) await endpoint.proxy?.close().catch(() => {});
+      relayEndpoints.clear();
       if (relayClient !== undefined) await relayClient.stop();
     },
   };
