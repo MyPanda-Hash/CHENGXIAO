@@ -59,7 +59,7 @@ function describeRealExecutable(shim) {
  * the real executable instead (see the README's Windows command).
  *
  * @param {{ command: string[], timeoutMs?: number, env?: Record<string, string> }} options - command template, limits, and extra child environment.
- * @returns {{ ask: (request: { prompt: string, cwd: string }) => Promise<{ answer: string, stderr: string, exitCode: number | null, timedOut: boolean }> }} the executor.
+ * @returns {{ ask: (request: { prompt: string, cwd: string, signal?: AbortSignal }) => Promise<{ answer: string, stderr: string, exitCode: number | null, timedOut: boolean, cancelled?: boolean }> }} the executor.
  */
 export function createHeadlessExecutor({ command, timeoutMs = DEFAULT_TIMEOUT_MS, env = {} }) {
   if (!Array.isArray(command) || command.length === 0) {
@@ -68,8 +68,15 @@ export function createHeadlessExecutor({ command, timeoutMs = DEFAULT_TIMEOUT_MS
   const [executable, ...templateArgs] = command;
 
   return {
-    async ask({ prompt, cwd }) {
+    async ask({ prompt, cwd, signal }) {
       return await new Promise((resolve) => {
+        // An already-aborted signal means the task was cancelled before it
+        // started; spawning it anyway would run work nobody will read.
+        if (signal?.aborted === true) {
+          resolve({ answer: '', stderr: '', exitCode: null, timedOut: false, cancelled: true });
+          return;
+        }
+
         if (isShellShimUnsupported(executable)) {
           resolve({
             answer: '',
@@ -107,6 +114,7 @@ export function createHeadlessExecutor({ command, timeoutMs = DEFAULT_TIMEOUT_MS
         let stdout = '';
         let stderr = '';
         let timedOut = false;
+        let cancelled = false;
         let settled = false;
 
         const timer = setTimeout(() => {
@@ -115,6 +123,16 @@ export function createHeadlessExecutor({ command, timeoutMs = DEFAULT_TIMEOUT_MS
           setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS).unref();
         }, timeoutMs);
         timer.unref();
+
+        // A cancellation kills the child exactly like a timeout does, but the
+        // outcome is reported as cancelled — the caller's decision — so the
+        // peer can tell it apart from a task that died on its own.
+        const onAbort = () => {
+          cancelled = true;
+          child.kill('SIGKILL');
+          setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS).unref();
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
 
         child.stdout.setEncoding('utf8');
         child.stderr.setEncoding('utf8');
@@ -129,11 +147,13 @@ export function createHeadlessExecutor({ command, timeoutMs = DEFAULT_TIMEOUT_MS
           if (settled) return;
           settled = true;
           clearTimeout(timer);
+          signal?.removeEventListener('abort', onAbort);
           resolve({
             answer: stdout.replace(/\s+$/u, ''),
             stderr: stderr.trim(),
             exitCode,
             timedOut,
+            ...(cancelled && { cancelled }),
           });
         };
 

@@ -132,3 +132,63 @@ test('the executor never shells out, so a prompt cannot inject a command', async
   );
   assert.equal(spawnSync(process.execPath, ['-e', '0']).status, 0);
 });
+
+test('a cancelled task reports cancellation, not failure', async () => {
+  const { runAsk } = await import('../src/ask.js');
+  const controller = new AbortController();
+  const executor = {
+    ask: (input) =>
+      new Promise((resolve) => {
+        input.signal?.addEventListener('abort', () =>
+          resolve({ answer: '', stderr: '', exitCode: null, timedOut: false, cancelled: true }),
+        );
+      }),
+  };
+
+  const pending = runAsk(
+    { prompt: 'p' },
+    { executor, defaultCwd: workspace, policy: {} },
+    { signal: controller.signal },
+  );
+  controller.abort();
+  const answer = await pending;
+
+  assert.equal(answer.ok, false);
+  assert.equal(answer.code, 'task-cancelled');
+});
+
+test('an abort signal kills a hanging child and reports cancellation', async () => {
+  const { createHeadlessExecutor } = await import('../src/headless.js');
+
+  const executor = createHeadlessExecutor({
+    command: [process.execPath, '-e', 'setTimeout(() => {}, 60_000)'],
+  });
+  const controller = new AbortController();
+  const started = Date.now();
+  const pending = executor.ask({ prompt: 'hang', cwd: workspace, signal: controller.signal });
+
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  controller.abort();
+  const result = await pending;
+
+  assert.equal(result.cancelled, true);
+  assert.equal(result.timedOut, false);
+  assert.ok(
+    Date.now() - started < 20_000,
+    'an aborted child must be killed, not waited out',
+  );
+});
+
+test('an already-aborted signal never starts the child', async () => {
+  const { createHeadlessExecutor } = await import('../src/headless.js');
+
+  const executor = createHeadlessExecutor({
+    command: taskEndingWith('should never run'),
+  });
+  const controller = new AbortController();
+  controller.abort();
+
+  const result = await executor.ask({ prompt: 'x', cwd: workspace, signal: controller.signal });
+  assert.equal(result.cancelled, true);
+  assert.equal(result.answer, '');
+});

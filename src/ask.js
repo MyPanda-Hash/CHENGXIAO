@@ -20,10 +20,11 @@ export const NOT_CONFIGURED = 'not-configured';
  * nothing" apart from "your task died", because it decides what to do next.
  *
  * @param {{ prompt: string, cwd?: string, timeoutMs?: number }} request - the peer's request.
- * @param {{ executor: { ask: (input: { prompt: string, cwd: string, timeoutMs?: number }) => Promise<{ answer: string, stderr: string, exitCode: number | null, timedOut: boolean }> }, defaultCwd: string, policy?: { allowedDirs?: string[] } }} deps - the task runner and Adapter policy.
+ * @param {{ executor: { ask: (input: { prompt: string, cwd: string, timeoutMs?: number, signal?: AbortSignal }) => Promise<{ answer: string, stderr: string, exitCode: number | null, timedOut: boolean, cancelled?: boolean }> }, defaultCwd: string, policy?: { allowedDirs?: string[] } }} deps - the task runner and Adapter policy.
+ * @param {{ signal?: AbortSignal }} [options] - an abort signal from the async task manager.
  * @returns {Promise<{ ok: true, answer: string, exitCode: number, outcome: string } | { ok: false, code: string, detail?: string }>} a wire-shaped answer.
  */
-export async function runAsk(request, { executor, defaultCwd, policy = {} }) {
+export async function runAsk(request, { executor, defaultCwd, policy = {} }, { signal } = {}) {
   const cwd = request?.cwd ?? defaultCwd;
   const rejection = REJECT({ prompt: request?.prompt, cwd }, policy);
   if (rejection !== undefined) return rejection;
@@ -32,8 +33,14 @@ export async function runAsk(request, { executor, defaultCwd, policy = {} }) {
     prompt: request.prompt,
     cwd,
     ...(request.timeoutMs !== undefined && { timeoutMs: request.timeoutMs }),
+    ...(signal !== undefined && { signal }),
   });
 
+  // A cancellation is the caller's decision, not a task outcome: it must read
+  // as cancelled rather than as a failure the caller might retry blindly.
+  if (result.cancelled === true) {
+    return { ok: false, code: 'task-cancelled', detail: 'the task was cancelled before it finished' };
+  }
   if (result.timedOut) {
     return { ok: false, code: 'task-timeout', detail: 'the task was still running when its ceiling was reached' };
   }
