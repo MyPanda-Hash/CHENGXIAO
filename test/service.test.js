@@ -82,6 +82,38 @@ test('a worker issues a code tied to its own reachable address', async () => {
   }
 });
 
+test('a pinned address is what the pairing code advertises, not the automatic guess', async () => {
+  // A machine holds several addresses at once — WSL, VMware, VPN adapters — and
+  // picking between them is a guess. When the guess is wrong the code names an
+  // address no peer can dial, and nothing about the failure says so. Hence the
+  // pin. This uses host 0.0.0.0 deliberately: a loopback bind short-circuits to
+  // 127.0.0.1 and would never reach the selection this test is about.
+  const service = await createPeerService({
+    home: await newHome(),
+    deviceName: 'worker',
+    allowedDirs: [tmpdir()],
+    executor: fakeExecutor,
+    listen: true,
+    host: '0.0.0.0',
+    port: 0,
+    addresses: ['192.168.0.15'],
+    log: quietLog,
+  });
+
+  try {
+    const ticket = await service.createTicket();
+
+    assert.match(
+      ticket.address,
+      /^192\.168\.0\.15:\d+$/u,
+      `the pin must decide the advertised address, got ${ticket.address}`,
+    );
+    assert.match(ticket.link, /^dshp:\/\/192\.168\.0\.15:\d+\//u);
+  } finally {
+    await service.stop();
+  }
+});
+
 test('an address is chosen that a peer can actually dial', async () => {
   const { lanAddresses, chooseAdvertisedAddress } = await import('../src/service.js');
 
