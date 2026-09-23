@@ -175,6 +175,11 @@ Get-NetNeighbor -IPAddress 192.168.0.2 | Select-Object IPAddress, LinkLayerAddre
 | `Reachable` | 机器活着、同网段。问题在端口（看防火墙那节） |
 | `Incomplete` / `Unreachable`，MAC 是 `00-00-00-00-00-00` | **同网段里没有这台机器**。连 ARP 都没人应答，端口更不可能通 |
 
+> **`Probe` / `Delay` 不是结论**，是"Windows 还在问"。刚发完包就读状态，常常正好读到
+> `Probe`，此时下结论会把一台**明明在同一个局域网**的机器误判成不在。
+> 必须轮询到它落到 `Reachable`（有真实 MAC）或 `Incomplete`/`Unreachable` 再判断——
+> 这个坑是实测踩出来的。桌面上的 `是否同一局域网.ps1` 已经按这个逻辑写好。
+
 第二种情况**不是防火墙问题**，而是这三者之一：
 
 1. **两台机器不在同一个网络**。两个不同的路由器都可以用 `192.168.x.x`，
