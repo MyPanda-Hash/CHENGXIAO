@@ -55,7 +55,7 @@ function disposerOf(mounted) {
  *   unmount: (nameOrId: string) => Promise<void>,
  * }} the manager.
  */
-export function createPeerMounts({ ctx, store, mcp }) {
+export function createPeerMounts({ ctx, store, mcp, toolCallTimeoutMs }) {
   /** Peer name → its disposer. Presence here is what "mounted" means. */
   const live = new Map();
 
@@ -105,6 +105,12 @@ export function createPeerMounts({ ctx, store, mcp }) {
           serverName: peer.name,
           url: `http://${peer.address}${MCP_PATH}`,
           headers: { authorization: `Bearer ${withCredential.credential}` },
+          // An ask may legitimately run for as long as the worker's task
+          // timeout allows, while the client library's own default cap is one
+          // minute. Without this, a task that outlives the cap is reported as
+          // a timeout to the caller while still running — and may succeed,
+          // which the caller never learns.
+          ...(toolCallTimeoutMs !== undefined && { toolCallTimeoutMs }),
         });
 
         live.set(peer.name, disposerOf(mountedPeer));

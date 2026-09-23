@@ -314,6 +314,49 @@ test('revoking on the worker stops the paired machine, and the initiator can for
   }
 });
 
+test('a mounted peer waits out the whole task window, not the client library default', async () => {
+  const worker = await makeWorker({ home: await newHome(), allowedDirs: [tmpdir()] });
+  const mounted = [];
+  const mountContext = {
+    effect: () => {},
+    async plugin(module, config) {
+      mounted.push({ module, config });
+      return () => {};
+    },
+  };
+  const initiator = await createPeerService({
+    home: await newHome(),
+    deviceName: 'my-desk',
+    executor: fakeExecutor,
+    listen: false,
+    log: quietLog,
+    mcp: { name: 'mcp-client', Config: (input) => input, apply: async () => {} },
+    mountContext,
+    toolCallTimeoutMs: 630_000,
+  });
+
+  try {
+    const ticket = await worker.createTicket();
+    await initiator.pair({ link: ticket.link });
+
+    // An ask is a whole agent turn on the other machine and may run up to the
+    // worker's task timeout — ten minutes by default. The MCP client library's
+    // own cap is one minute, so a task that outlives it is reported to the
+    // caller as a timeout while it is still running and may still succeed,
+    // which is exactly what happened between the real machines. The mount must
+    // carry the task window through, or the tool lies about the outcome.
+    assert.equal(mounted.length, 1);
+    assert.equal(
+      mounted[0].config.toolCallTimeoutMs,
+      630_000,
+      'the mount must wait at least as long as the worker may legitimately run',
+    );
+  } finally {
+    await initiator.stop();
+    await worker.stop();
+  }
+});
+
 test('a worker that is not listening refuses pairing instead of pretending', async () => {
   const idle = await createPeerService({
     home: await newHome(),

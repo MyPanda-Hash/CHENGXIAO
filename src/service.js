@@ -108,6 +108,7 @@ export function chooseAdvertisedAddress({ bindHost = '0.0.0.0', addresses, netwo
  *   maxBytes?: number,
  *   mcp?: object,
  *   mountContext?: object,
+ *   toolCallTimeoutMs?: number,
  *   addresses?: string[],
  *   log?: (line: string) => void,
  * }} options - service wiring.
@@ -133,6 +134,7 @@ export async function createPeerService({
   maxBytes,
   mcp,
   mountContext,
+  toolCallTimeoutMs,
   addresses,
   log = () => {},
 }) {
@@ -204,7 +206,7 @@ export async function createPeerService({
   const mounts =
     mcp === undefined || mountContext === undefined
       ? undefined
-      : createPeerMounts({ ctx: mountContext, store: initiator, mcp });
+      : createPeerMounts({ ctx: mountContext, store: initiator, mcp, toolCallTimeoutMs });
 
   return {
     status() {
