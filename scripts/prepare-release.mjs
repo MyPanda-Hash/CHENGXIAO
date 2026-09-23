@@ -17,7 +17,7 @@ const projectRoot = fileURLToPath(new URL('..', import.meta.url));
 const output = process.argv[2] ?? join(projectRoot, 'dist', 'release');
 
 /** Everything an installed plugin needs, and nothing else. */
-const SHIPPED = ['lib', 'src', 'cordis.patch.yml', 'README.md', 'LICENSE', 'package.json'];
+const SHIPPED = ['lib', 'src', 'client.cjs', 'cordis.patch.yml', 'README.md', 'LICENSE', 'package.json'];
 
 /** Directories that must never be copied, whatever else happens. */
 const FORBIDDEN = ['node_modules', 'test', 'scripts', '.git'];

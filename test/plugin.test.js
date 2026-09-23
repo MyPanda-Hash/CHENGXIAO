@@ -33,8 +33,11 @@ const profiles = ['desktop'];
 const RUNTIME_FILES = [
   'package.json',
   'cordis.patch.yml',
+  'client.cjs',
   'lib/plugin.js',
   'src/tools-peer.js',
+  'src/settings-api.js',
+  'src/settings-routes.js',
   'src/service.js',
   'src/server.js',
   'src/trust.js',

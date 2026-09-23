@@ -70,6 +70,21 @@ const { Context } = await import('@deepseek-ai/cordis');
 const root = new Context();
 const registered = [];
 const provided = [];
+const webRoutes = [];
+const webServer = {
+  register(spec) {
+    webRoutes.push(spec);
+    return () => {
+      spec.disposed = true;
+    };
+  },
+};
+
+// The settings page needs a Web UI carrier. `apply` reads it with `ctx.get`, so
+// leaving it out here would silently skip the settings path — the one part of
+// this plugin that otherwise needs a restart to be checked at all.
+root.provide('webServer', webServer);
+
 const ctx = {
   ...root,
   tools: { register: (tool) => registered.push(tool) },
@@ -77,6 +92,7 @@ const ctx = {
   provide: (key, value) => provided.push([key, value]),
   logger: () => ({ info: () => {}, error: () => {} }),
   plugin: root.plugin.bind(root),
+  get: root.get.bind(root),
 };
 
 try {
@@ -86,6 +102,7 @@ try {
 }
 console.log('    apply() returned cleanly');
 console.log(`    provided: ${provided.map(([key]) => key).join(', ') || '(none)'}`);
+console.log(`    settings routes: ${webRoutes.map((route) => route.path).join(', ') || '(none)'}`);
 
 console.log('--- 4) tools');
 for (const tool of registered) {
