@@ -65,20 +65,28 @@ export function createPairThrottle({ maxFailures = 5 } = {}) {
 /**
  * Handle one pairing request.
  *
+ * `source` and `address` are deliberately two parameters, because they answer
+ * two different questions and only one of them may key the throttle. `address`
+ * is this worker's own address, which is the same on every request and is
+ * reported back to the peer. `source` identifies the caller. Keying the throttle
+ * on `address` would give every caller one shared failure budget, so one noisy
+ * machine could lock out every other machine.
+ *
  * @param {{
  *   body: unknown,
  *   address: string,
+ *   source?: string,
  *   trust: { identity: { installId: string }, addPeer: (input: object) => Promise<{ peer: object, credential: string }> },
  *   pairing: { consume: (code: string, claim: object) => Promise<object> },
  *   throttle?: ReturnType<typeof createPairThrottle>,
  * }} input - one handshake attempt.
  * @returns {Promise<{ status: number, body: object }>} the HTTP answer.
  */
-export async function handlePair({ body, address, trust, pairing, throttle }) {
-  if (throttle?.blocked(address) === true) {
+export async function handlePair({ body, address, source, trust, pairing, throttle }) {
+  if (source !== undefined && throttle?.blocked(source) === true) {
     return {
       status: STATUS.throttled,
-      body: { ok: false, code: 'throttled', detail: 'too many failed pairing attempts from this address' },
+      body: { ok: false, code: 'throttled', detail: 'too many failed pairing attempts from this machine' },
     };
   }
 
@@ -96,7 +104,7 @@ export async function handlePair({ body, address, trust, pairing, throttle }) {
       publicKey: claim.publicKey,
     });
   } catch (cause) {
-    throttle?.recordFailure(address);
+    if (source !== undefined) throttle?.recordFailure(source);
     return {
       status: STATUS.forbidden,
       body: { ok: false, code: cause?.code ?? 'pairing-refused', detail: cause?.message },
@@ -111,7 +119,7 @@ export async function handlePair({ body, address, trust, pairing, throttle }) {
     policy: consumed.policy ?? DEFAULT_PEER_POLICY,
   });
 
-  throttle?.clear(address);
+  if (source !== undefined) throttle?.clear(source);
 
   return {
     status: STATUS.created,

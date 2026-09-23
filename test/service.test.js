@@ -114,6 +114,36 @@ test('a pinned address is what the pairing code advertises, not the automatic gu
   }
 });
 
+test('the running service actually throttles wrong codes, not merely could', async () => {
+  // The throttle is optional on handlePair, so a service that forgets to build
+  // one answers wrong codes forever while every unit test of the throttle stays
+  // green — the control exists and is tested, and is not in the path. Only
+  // driving the live listener catches that.
+  const worker = await makeWorker({ home: await newHome(), allowedDirs: [tmpdir()] });
+
+  try {
+    const origin = worker.status().url.replace(/\/mcp$/u, '');
+    const attempt = async () =>
+      await fetch(`${origin}/pair`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: 'AAAAA-BBBBB', name: 'brute', publicKey: 'PK' }),
+      });
+
+    const statuses = [];
+    for (let index = 0; index < 8; index += 1) {
+      statuses.push((await attempt()).status);
+    }
+
+    assert.ok(
+      statuses.includes(429),
+      `wrong codes must eventually be refused, got ${statuses.join(', ')}`,
+    );
+  } finally {
+    await worker.stop();
+  }
+});
+
 test('an address is chosen that a peer can actually dial', async () => {
   const { lanAddresses, chooseAdvertisedAddress } = await import('../src/service.js');
 

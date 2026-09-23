@@ -5,7 +5,7 @@ import { openInitiatorStore } from './initiator.js';
 import { pairWith, parsePairLink } from './pair-client.js';
 import { createVerifier } from './auth.js';
 import { createPeerMounts } from './mounts.js';
-import { handlePair } from './handshake.js';
+import { createPairThrottle, handlePair } from './handshake.js';
 import { startAdapter } from './server.js';
 
 /**
@@ -145,6 +145,9 @@ export async function createPeerService({
   let pending;
 
   if (listen) {
+    // Built once per service so failure counts survive across requests — a
+    // throttle constructed per request would count every attempt as the first.
+    const throttle = createPairThrottle();
     adapter = await startAdapter({
       verifier: createVerifier({ trust }),
       executor,
@@ -157,11 +160,16 @@ export async function createPeerService({
       pairEndpoint: async ({ req, res }) => {
         try {
           const body = await readJsonBody(req);
+          // The caller's own address keys the throttle; `address` stays this
+          // worker's address, which is what the peer is told to dial back.
+          const source = req.socket?.remoteAddress;
           const answer = await handlePair({
             body,
             address: `${advertiseHost()}:${String(adapter.port)}`,
+            ...(source !== undefined && { source }),
             trust,
             pairing,
+            throttle,
           });
           res.writeHead(answer.status, { 'content-type': 'application/json' });
           res.end(JSON.stringify(answer.body));

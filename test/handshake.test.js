@@ -169,7 +169,8 @@ test('repeated wrong codes are throttled instead of guessed forever', async () =
   const attempt = async () =>
     await handlePair({
       body: { code: 'AAAAA-BBBBB', name: 'brute', publicKey: 'PK' },
-      address: '10.0.0.9:1234',
+      address: ADDRESS,
+      source: '10.0.0.9:1234',
       trust,
       pairing,
       throttle,
@@ -191,14 +192,16 @@ test('a successful pairing clears the failure count for that source', async () =
 
   await handlePair({
     body: { code: 'AAAAA-BBBBB', name: 'x', publicKey: 'PK' },
-    address: source,
+    address: ADDRESS,
+    source,
     trust,
     pairing,
     throttle,
   });
   await handlePair({
     body: { code: 'AAAAA-CCCCC', name: 'x', publicKey: 'PK' },
-    address: source,
+    address: ADDRESS,
+    source,
     trust,
     pairing,
     throttle,
@@ -208,7 +211,8 @@ test('a successful pairing clears the failure count for that source', async () =
   const ticket = await pairing.create({ address: ADDRESS });
   const ok = await handlePair({
     body: { code: ticket.code, name: 'desk', publicKey: 'PK' },
-    address: source,
+    address: ADDRESS,
+    source,
     trust,
     pairing,
     throttle,
@@ -228,7 +232,8 @@ test('one noisy source cannot lock out another', async () => {
   for (let index = 0; index < 3; index += 1) {
     await handlePair({
       body: { code: 'AAAAA-BBBBB', name: 'x', publicKey: 'PK' },
-      address: noisy,
+      address: ADDRESS,
+      source: noisy,
       trust,
       pairing,
       throttle,
@@ -238,11 +243,49 @@ test('one noisy source cannot lock out another', async () => {
   const ticket = await pairing.create({ address: ADDRESS });
   const other = await handlePair({
     body: { code: ticket.code, name: 'desk', publicKey: 'PK' },
-    address: quiet,
+    address: ADDRESS,
+    source: quiet,
     trust,
     pairing,
     throttle,
   });
 
   assert.equal(other.status, 201, 'throttling must be per source, not global');
+});
+
+test('the throttle is keyed by the caller, never by the worker\u2019s own address', async () => {
+  const { handlePair, createPairThrottle } = await import('../src/handshake.js');
+  const { trust, pairing } = await newStores();
+  // Only two failures are allowed. `address` is the worker's own address and is
+  // identical on every call, exactly as it is in the real service — so if the
+  // throttle keys on it, the second caller is locked out by the first one's
+  // mistakes, which is the global bucket the test above forbids.
+  const throttle = createPairThrottle({ maxFailures: 2 });
+
+  for (let index = 0; index < 3; index += 1) {
+    await handlePair({
+      body: { code: 'AAAAA-BBBBB', name: 'x', publicKey: 'PK' },
+      address: ADDRESS,
+      source: '10.0.0.9:1234',
+      trust,
+      pairing,
+      throttle,
+    });
+  }
+
+  const ticket = await pairing.create({ address: ADDRESS });
+  const other = await handlePair({
+    body: { code: ticket.code, name: 'desk', publicKey: 'PK' },
+    address: ADDRESS,
+    source: '10.0.0.10:5555',
+    trust,
+    pairing,
+    throttle,
+  });
+
+  assert.equal(
+    other.status,
+    201,
+    'a second machine must not inherit the first machine\u2019s failures',
+  );
 });
