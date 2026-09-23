@@ -18,7 +18,7 @@
 ## 安装
 
 ```sh
-dsh plugin --profile <你的 profile> add github:MyPanda-Hash/DEEP-CONNECTION
+dsh plugin --profile <你的 profile> add github:MyPanda-Hash/CHENGXIAO
 ```
 
 装完后在 profile 的 `cordis.patch.yml` 里加一行（本仓库的 `cordis.patch.yml` 有逐项注释）：
