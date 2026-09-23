@@ -28,6 +28,15 @@
   "engines": {
     "node": ">=20.19"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MyPanda-Hash/DEEP-CONNECTION.git"
+  },
+  "homepage": "https://github.com/MyPanda-Hash/DEEP-CONNECTION#readme",
+  "bugs": {
+    "url": "https://github.com/MyPanda-Hash/DEEP-CONNECTION/issues"
+  },
+  "author": "MyPanda-Hash",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
