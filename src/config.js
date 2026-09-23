@@ -69,10 +69,29 @@ export function readConfig(env, cwd, platformDefaults = {}) {
     // operator-supplied command is taken exactly as written.
     commandEnv: overridden ? {} : (platformDefaults.windowsEnv ?? {}),
     timeoutMs: parsePositiveInt(env.DSH_PEER_TIMEOUT_MS, 10 * 60 * 1000, 'timeout-invalid'),
+    // The relay: absent unless configured, so the safe default is no relay.
+    ...(parseRelayUrl(env.DSH_PEER_RELAY_URL) !== undefined && { relayUrl: parseRelayUrl(env.DSH_PEER_RELAY_URL) }),
+    ...(env.DSH_PEER_RELAY_DEVICE_ID !== undefined &&
+      env.DSH_PEER_RELAY_DEVICE_ID.trim() !== '' && { relayDeviceId: env.DSH_PEER_RELAY_DEVICE_ID.trim() }),
     ...(env.DSH_PEER_MAX_BYTES !== undefined && {
       maxBytes: parsePositiveInt(env.DSH_PEER_MAX_BYTES, 0, 'max-bytes-invalid'),
     }),
   };
+}
+
+/**
+ * Parse the relay URL, normalising to an origin.
+ *
+ * @param {string | undefined} raw - the configured relay origin.
+ * @returns {string | undefined} the normalised origin, or undefined when unset or unusable.
+ */
+function parseRelayUrl(raw) {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  try {
+    return new URL(raw.trim()).origin;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

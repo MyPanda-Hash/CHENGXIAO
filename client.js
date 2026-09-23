@@ -295,6 +295,16 @@ window.__ModuleLoader__.load({
             { className: css("note") },
             "开启/关闭监听需要改 profile 配置并重启 DSH；这里是只读状态。",
           ),
+          status.connection === "relay" || (status.relay && status.relay.enabled)
+            ? h(
+                "p",
+                { className: css("note"), "data-tone": status.connection === "relay" ? "ok" : undefined },
+                status.connection === "relay"
+                  ? "当前通过中继连接（无需入站端口）。" +
+                    (status.relay && status.relay.online === false ? "但中继当前不在线。" : "")
+                  : "中继已配置但当前未使用；直连可用时优先直连。",
+              )
+            : null,
         ),
 
         // ── shared workspace ──────────────────────────────────────────────────

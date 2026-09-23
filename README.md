@@ -40,7 +40,39 @@ dsh plugin --profile <你的 profile> add github:MyPanda-Hash/CHENGXIAO
 
 配对码一次性、15 分钟有效；同一账号的两台设备**也不自动互信**，首次连接必须在干活端人工确认。
 
-> 跨网络的机器（不在同一局域网）本版仍需 Tailscale / 端口映射等组网方式；官方中继在后续版本提供。
+> 跨网络的机器（不在同一局域网）可以用下方的**中继模式**，或继续用 Tailscale / 端口映射。
+
+## 跨网络：中继模式（自托管）
+
+两台机器**不在同一局域网**、又不想装 Tailscale 时，用中继：双方都**主动出站**连接同一台
+中继服务器，不需要任何入站端口、端口映射或防火墙配置。中继只转发**端到端加密**的信封，
+看不到配对码、凭据、任务内容或文件明文，也不落盘。
+
+1. 在任一台有公网可达的机器上跑中继（自托管）：
+
+   ```sh
+   DSH_RELAY_HOST=0.0.0.0 DSH_RELAY_PORT=7332 node src/relay-server-bin.js
+   ```
+
+   生产环境建议放到反向代理（TLS）后面。
+
+2. 两台机器的 profile 覆盖层里启用中继（改完重启 DSH）：
+
+   ```yaml
+   - id: dsh-peer-mcp
+     config:
+       relayEnabled: true
+       relayUrl: 'https://relay.example.com'   # 或 http://<中继地址>:7332
+       allowedDirs:
+         - 'C:\Users\你的用户名\DSH Workspace'
+   ```
+
+3. 干活端「生成配对码」，链接形如 `dshr://relay.example.com/<设备ID>/XXXXX-XXXXX`，
+   发起端照常粘贴配对。配对后的工具调用自动经中继转发，模型与使用方式完全不变。
+
+加密方式：配对时双方做一次性 X25519 密钥交换，配对应答（含长期凭据）与后续所有消息
+都用派生的会话密钥做 AES-256-GCM 加密；中继转发的永远是密文，配对码本身不经过中继。
+直连和中继可以共存：同一台机器开监听时局域网内仍走直连。
 
 ### 配置
 

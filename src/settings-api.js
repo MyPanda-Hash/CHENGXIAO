@@ -104,6 +104,8 @@ export function createSettingsApi({ service }) {
     return {
       ok: true,
       listening: status.listening === true,
+      connection: status.connection ?? (status.listening === true ? 'lan' : 'off'),
+      ...(status.relay !== undefined && { relay: status.relay }),
       ...(status.address !== undefined && { address: status.address }),
       deviceName: status.deviceName,
       installId: status.installId,

@@ -24,12 +24,14 @@ const POLL_CHECK_MS = 50;
 /**
  * Start one relay.
  *
- * @param {{ mailbox?: ReturnType<typeof createMailbox>, maxBodyBytes?: number, log?: (line: string) => void }} [options] - injectable mailbox and limits.
+ * @param {{ mailbox?: ReturnType<typeof createMailbox>, maxBodyBytes?: number, host?: string, port?: number, log?: (line: string) => void }} [options] - injectable mailbox, limits and bind address.
  * @returns {Promise<{ http: import('node:http').Server, port: number, url: string, close: () => Promise<void> }>} the running relay.
  */
 export async function createRelayServer({
   mailbox = createMailbox(),
   maxBodyBytes = MAX_BODY_BYTES,
+  host = '127.0.0.1',
+  port = 0,
   log = () => {},
 } = {}) {
   const devices = new Set();
@@ -127,15 +129,15 @@ export async function createRelayServer({
     });
   }
 
-  http.listen(0, '127.0.0.1');
+  http.listen(port, host);
   await once(http, 'listening');
   const bound = http.address();
-  const port = typeof bound === 'object' && bound !== null ? bound.port : 0;
+  const actualPort = typeof bound === 'object' && bound !== null ? bound.port : port;
 
   return {
     http,
-    port,
-    url: `http://127.0.0.1:${String(port)}`,
+    port: actualPort,
+    url: `http://${host}:${String(actualPort)}`,
     async close() {
       http.close();
       // Keep-alive sockets (undici's global agent) would otherwise hold the
