@@ -7,14 +7,14 @@
   "main": "./lib/plugin.js",
   "exports": {
     ".": "./lib/plugin.js",
-    "./client": "./client.cjs",
+    "./client": "./client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
     "lib",
     "src",
-    "client.cjs",
+    "client.js",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
