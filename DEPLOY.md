@@ -276,6 +276,34 @@ const VIRTUAL_INTERFACE = /wsl|vmware|virtualbox|hyper-v|vethernet|docker|loopba
 
 改完重启 DSH，重新发码。
 
+#### 具体操作（桌面上的 `组网配对准备.ps1` 会代劳大部分）
+
+在**两台机器**上各跑（都要管理员 PowerShell）：
+
+```powershell
+# 1) 装 Tailscale（winget，会弹 UAC），然后右下角托盘图标 -> Log in（GitHub 账号即可），
+#    两台要登录同一个账号
+.\组网配对准备.ps1 -Install
+
+# 2) 登录完成后：自动探测本机的组网 IP，写进所有提到 dsh-peer-mcp 的 profile，
+#    并加防火墙规则（Profile=Any —— 组网网卡通常算 Private，只按 Public 放的旧规则不覆盖它）
+.\组网配对准备.ps1 -Lock
+# 探测不到时手动给：.\组网配对准备.ps1 -Lock -MeshIp 100.x.y.z
+```
+
+然后：两台都重启 DSH → 干活端发新配对码 → 主力机粘贴。链接里应当出现 `100.x.y.z`
+这样的地址，而不再是 `192.168.x.x`。
+
+**注意方向性**：`addresses` 只对**干活端（发码那台）**是必须的 —— 配对码里写的是它的地址。
+发起端不发码，锁不锁都行（锁了也不出错）。
+
+脚本改写 profile 的安全性是用真实文件验证过的：只多/改 `addresses` 那两行，
+原行尾（LF/CRLF）与 BOM 状态原样保留，改完用 DSH 宿主同一套 yaml 解析器复查过
+顶层仍是数组、其余 7 个条目与 listen/host/port/allowedDirs/taskTimeoutMs 全部原样。
+这里有个隐蔽坑值得记一笔：读文件用 `UTF8.GetString` 时 **BOM 字符不会被去掉**，
+写回时编码器又会补一个 —— 不处理就是双 BOM，宿主解析直接失败、整个 profile 加载不了。
+（单 BOM 是合法的，宿主能解析。）
+
 ### ② 端口映射
 
 在干活端路由器上把 TCP 7331 映射到那台机器，再把公网地址写进 `addresses`。
