@@ -26,6 +26,7 @@ const PREFIX = '/plugins/dsh-peer-mcp';
 /** Routes the page calls, and the methods they answer. */
 const ROUTES = [
   { path: `${PREFIX}/status`, method: 'GET' },
+  { path: `${PREFIX}/workspace`, methods: ['GET', 'POST'] },
   { path: `${PREFIX}/ticket`, method: 'POST' },
   { path: `${PREFIX}/pair`, method: 'POST' },
   { path: `${PREFIX}/revoke`, method: 'POST' },
@@ -33,6 +34,9 @@ const ROUTES = [
 
 /** Largest request body accepted from the page. */
 const MAX_BODY_BYTES = 16 * 1024;
+
+/** The HTTP methods one route answers, normalised to upper case. */
+const methodsOf = (route) => (route.methods ?? [route.method]).map((method) => method.toUpperCase());
 
 /**
  * Whether a request came from this machine's own loopback interface.
@@ -69,15 +73,15 @@ export function registerSettingsRoutes({ ctx, service, log = () => {} }) {
           return;
         }
 
-        if (String(req.method).toUpperCase() !== route.method) {
-          res.writeHead(405, { 'content-type': 'application/json', allow: route.method });
+        if (!methodsOf(route).includes(String(req.method).toUpperCase())) {
+          res.writeHead(405, { 'content-type': 'application/json', allow: methodsOf(route).join(', ') });
           res.end(JSON.stringify({ ok: false, code: 'method-not-allowed' }));
           return;
         }
 
         let body;
         try {
-          body = route.method === 'POST' ? await readJsonBody(req) : undefined;
+          body = String(req.method).toUpperCase() === 'POST' ? await readJsonBody(req) : undefined;
         } catch (cause) {
           log(`settings body rejected for ${route.path}: ${cause?.message ?? String(cause)}`);
           res.writeHead(400, { 'content-type': 'application/json' });
@@ -85,7 +89,7 @@ export function registerSettingsRoutes({ ctx, service, log = () => {} }) {
           return;
         }
 
-        const answer = await api.handle({ method: route.method, path: route.path, body });
+        const answer = await api.handle({ method: String(req.method), path: route.path, body });
         res.writeHead(answer.status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
         res.end(JSON.stringify(answer.body));
       },

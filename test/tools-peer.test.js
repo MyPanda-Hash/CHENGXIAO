@@ -80,6 +80,8 @@ test('peer_status reports both directions without leaking any secret', async () 
     assert.equal(serialized.includes('code'), false, 'a status read must never carry a pairing code');
     assert.equal(serialized.includes('credential'), false, 'a status read must never carry a credential');
     assert.equal(result.pendingUntil !== undefined, true, 'the operator needs to know a code is live');
+    assert.equal(result.workspace.path !== undefined, true);
+    assert.equal(result.capabilities.runSystemCommand, false);
   } finally {
     await service.stop();
   }

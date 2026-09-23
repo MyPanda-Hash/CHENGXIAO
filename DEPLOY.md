@@ -12,6 +12,21 @@
 | 能访问 `codeload.github.com` | 装插件时 pnpm 从这里下载（**不需要 git CLI** —— pnpm 不用 `git clone`） |
 | 同一局域网 | 跨 NAT 不通，本版不做中继 —— 想跨网络见第六节 |
 
+> **同一局域网内不需要 Tailscale。** 两台机器直接 TCP 互通时，`install-peer.ps1`
+> 装完、重启、发码即可。组网工具只用于"两台机器不在同一个网络"的场景（见第六节），
+> 不是安装前提。
+
+## 零配置快速开始（同一局域网）
+
+1. 跑 `.\install-peer.ps1 -AllowedDirs "C:\Users\<用户名>\DSH Workspace"`（或省略
+   `-AllowedDirs`，插件会使用默认共享工作区 `%USERPROFILE%\DSH Workspace`）。
+2. 重启 DSH。干活端在 `设置 → 设备互联` 核对「共享工作区」目录与能力权限摘要。
+3. 干活端「生成配对码」，把短码或完整链接交给发起端。
+4. 发起端在同一个页面粘贴链接 → 配对 → 工具立即可用。
+
+不配 `allowedDirs` 时，插件不会把整个用户目录放进白名单：默认工作区是
+`%USERPROFILE%\DSH Workspace`。设置页里保存的共享工作区立即生效并自动迁移旧配置。
+
 ## 一、装插件
 
 > ⚠️ **先确认那台机器在跑哪个 profile。** 下面的命令默认 `desktop`。

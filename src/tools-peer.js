@@ -85,6 +85,8 @@ const peerStatus = {
     pendingAddress: text('The address a live pairing code carries.'),
     peers: arrayOfObjects('Machines this one may drive.'),
     trustedBy: arrayOfObjects('Machines allowed to drive this one.'),
+    workspace: { type: 'object', additionalProperties: true, description: 'The shared workspace summary.' },
+    capabilities: { type: 'object', additionalProperties: true, description: 'Least-privilege collaboration capabilities.' },
   }),
   execute: async (_args, { service }) =>
     await answering(async () => {
@@ -103,6 +105,8 @@ const peerStatus = {
           preset: peer.policy?.preset ?? 'unknown',
           ...(peer.revokedAt !== undefined && { revokedAt: peer.revokedAt }),
         })),
+        workspace: status.workspace,
+        capabilities: status.capabilities,
       };
     }, 'status-failed'),
 };

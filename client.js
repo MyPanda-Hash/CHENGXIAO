@@ -44,6 +44,7 @@ window.__ModuleLoader__.load({
       ticket: "/plugins/dsh-peer-mcp/ticket",
       pair: "/plugins/dsh-peer-mcp/pair",
       revoke: "/plugins/dsh-peer-mcp/revoke",
+      workspace: "/plugins/dsh-peer-mcp/workspace",
     };
 
     var inject = ["slots", "locale"];
@@ -71,16 +72,16 @@ window.__ModuleLoader__.load({
       "border:1px dashed var(--pcm-line);background:var(--background,transparent);user-select:all;cursor:text;}",
       "." + css("link") + "{display:block;word-break:break-all;user-select:all;cursor:text;font-size:12px;color:var(--pcm-dim);}",
       "." + css("button") + "{appearance:none;border:1px solid var(--pcm-line);background:var(--background,transparent);",
-      "color:inherit;font:inherit;padding:6px 12px;border-radius:8px;cursor:pointer;",
-      "min-height:32px;transition-property:background-color,border-color,transform;transition-duration:120ms;transition-timing-function:ease-out;}",
+      "color:inherit;font:inherit;padding:8px 14px;border-radius:8px;cursor:pointer;",
+      "min-height:40px;transition-property:background-color,border-color,transform;transition-duration:120ms;transition-timing-function:ease-out;}",
       "." + css("button") + ":hover:not(:disabled){background:var(--pcm-raised);}",
       "." + css("button") + ":active:not(:disabled){transform:scale(.97);}",
       "." + css("button") + ":disabled{opacity:.5;cursor:default;}",
       "." + css("button") + ":focus-visible{outline:2px solid var(--pcm-fg);outline-offset:2px;}",
       "." + css("primary") + "{border-color:transparent;background:var(--pcm-fg);color:var(--background,#fff);}",
       "." + css("danger") + "{color:var(--pcm-bad);}",
-      "." + css("input") + "{flex:1 1 260px;min-width:0;font:inherit;padding:7px 10px;border-radius:8px;",
-      "border:1px solid var(--pcm-line);background:var(--background,transparent);color:inherit;min-height:32px;}",
+      "." + css("input") + "{flex:1 1 260px;min-width:0;font:inherit;padding:9px 10px;border-radius:8px;",
+      "border:1px solid var(--pcm-line);background:var(--background,transparent);color:inherit;min-height:40px;}",
       "." + css("input") + ":focus-visible{outline:2px solid var(--pcm-fg);outline-offset:1px;}",
       "." + css("list") + "{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none;}",
       "." + css("item") + "{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;",
@@ -93,6 +94,9 @@ window.__ModuleLoader__.load({
       "." + css("note") + "{font-size:12px;}",
       "." + css("note") + "[data-tone=ok]{color:var(--pcm-ok);}",
       "." + css("note") + "[data-tone=error]{color:var(--pcm-bad);}",
+      "." + css("cap") + "{display:flex;flex-wrap:wrap;gap:6px;}",
+      "." + css("cap") + " ." + css("tag") + "[data-cap=on]{color:var(--pcm-ok);border-color:currentColor;}",
+      "." + css("cap") + " ." + css("tag") + "[data-cap=off]{color:var(--pcm-dim);}",
       "." + css("empty") + "{padding:14px;border:1px dashed var(--pcm-line);border-radius:10px;text-align:center;color:var(--pcm-dim);font-size:12px;}",
     ].join("");
 
@@ -140,6 +144,7 @@ window.__ModuleLoader__.load({
       var [preset, setPreset] = react.useState("workspace-write");
       var [note, setNote] = react.useState(null);
       var [busy, setBusy] = react.useState(false);
+      var [workspacePath, setWorkspacePath] = react.useState("");
 
       var refresh = react.useCallback(function () {
         return readStatus()
@@ -231,6 +236,22 @@ window.__ModuleLoader__.load({
         });
       };
 
+      var onSaveWorkspace = function () {
+        var path = workspacePath.trim();
+        if (path === "") return;
+        run(function () {
+          return call(API.workspace, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ path: path }),
+          });
+        }, function (result) {
+          if (result && result.ok === true) {
+            setNote({ tone: "ok", text: "共享工作区已更新。" });
+          }
+        });
+      };
+
       if (status === null) {
         return h("div", { className: NS }, h("p", null, "正在读取设备互联状态…"));
       }
@@ -276,6 +297,102 @@ window.__ModuleLoader__.load({
           ),
         ),
 
+        // ── shared workspace ──────────────────────────────────────────────────
+        h(
+          "section",
+          { className: css("group") },
+          h("h3", null, "共享工作区"),
+          h(
+            "p",
+            null,
+            "对端机器只能在这个目录里读写文件和执行任务，工作区之外一律拒绝。",
+          ),
+          status.workspace
+            ? h(
+                "div",
+                { className: css("row") },
+                h("span", { className: css("mono") + " " + css("grow") }, status.workspace.path),
+                h(
+                  "span",
+                  { className: css("tag") },
+                  status.workspace.source === "configured" ? "自定义" : "默认",
+                ),
+              )
+            : null,
+          h(
+            "div",
+            { className: css("row") },
+            h("input", {
+              className: css("input") + " " + css("mono"),
+              type: "text",
+              value: workspacePath,
+              placeholder: "输入要共享的绝对目录…",
+              spellCheck: false,
+              "aria-label": "共享工作区路径",
+              onChange: function (event) {
+                setWorkspacePath(event.target.value);
+              },
+            }),
+            h(
+              "button",
+              {
+                type: "button",
+                className: css("button"),
+                disabled: busy || workspacePath.trim() === "",
+                onClick: onSaveWorkspace,
+              },
+              "保存工作区",
+            ),
+          ),
+          h(
+            "p",
+            { className: css("note") },
+            "默认是用户目录下的 DSH Workspace；保存后立即生效，旧配置自动迁移。",
+          ),
+          status.capabilities
+            ? h(
+                "div",
+                { className: css("cap") },
+                h("h3", null, "对端权限"),
+                h(
+                  "span",
+                  { className: css("tag"), "data-cap": status.capabilities.readWorkspace ? "on" : "off" },
+                  "读取工作区",
+                ),
+                h(
+                  "span",
+                  { className: css("tag"), "data-cap": status.capabilities.writeWorkspace ? "on" : "off" },
+                  "写入工作区",
+                ),
+                h(
+                  "span",
+                  { className: css("tag"), "data-cap": status.capabilities.runTask ? "on" : "off" },
+                  "执行任务",
+                ),
+                h(
+                  "span",
+                  { className: css("tag"), "data-cap": status.capabilities.transferFiles ? "on" : "off" },
+                  "传输文件",
+                ),
+                h(
+                  "span",
+                  { className: css("tag"), "data-cap": status.capabilities.runSystemCommand ? "on" : "off" },
+                  "系统命令",
+                ),
+                h(
+                  "span",
+                  { className: css("tag"), "data-cap": status.capabilities.accessOutsideWorkspace ? "on" : "off" },
+                  "工作区外访问",
+                ),
+                h(
+                  "span",
+                  { className: css("tag"), "data-cap": status.capabilities.modifyDshConfig ? "on" : "off" },
+                  "修改 DSH 配置",
+                ),
+              )
+            : null,
+        ),
+
         // ── pairing code ──────────────────────────────────────────────────────
         h(
           "section",
@@ -296,8 +413,8 @@ window.__ModuleLoader__.load({
                 },
                 "aria-label": "授予对端的权限档位",
               },
-              h("option", { value: "workspace-write" }, "workspace-write（默认，较窄）"),
-              h("option", { value: "danger-full-access" }, "danger-full-access（放宽）"),
+              h("option", { value: "workspace-write" }, "工作区协作（默认，推荐）"),
+              h("option", { value: "danger-full-access" }, "完全控制（高级，不推荐）"),
             ),
             h(
               "button",
@@ -314,7 +431,7 @@ window.__ModuleLoader__.load({
             ? h(
                 "div",
                 { className: css("card") },
-                h("p", { className: css("code") + " " + css("mono") }, ticket.code),
+                h("p", { className: css("code") + " " + css("mono") }, ticket.shortCode || ticket.code),
                 h("p", { className: css("note") }, "完整链接（另一台机器直接粘贴这一行）："),
                 h("span", { className: css("link") + " " + css("mono") }, ticket.link),
                 h(
@@ -371,7 +488,7 @@ window.__ModuleLoader__.load({
                   );
                 }),
               )
-            : null,
+            : h("p", { className: css("empty") }, "尚未连接其他机器。"),
         ),
 
         // ── who may drive this machine ────────────────────────────────────────

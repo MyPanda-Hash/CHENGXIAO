@@ -126,7 +126,7 @@ const withRoutes = async (service, run) => {
   }
 };
 
-test('all four routes are registered as exact paths under the plugin prefix', async () => {
+test('all five routes are registered as exact paths under the plugin prefix', async () => {
   const service = await makeService(false);
   await withRoutes(service, async ({ registered }) => {
     assert.deepEqual(
@@ -136,12 +136,30 @@ test('all four routes are registered as exact paths under the plugin prefix', as
         '/plugins/dsh-peer-mcp/revoke',
         '/plugins/dsh-peer-mcp/status',
         '/plugins/dsh-peer-mcp/ticket',
+        '/plugins/dsh-peer-mcp/workspace',
       ],
     );
     for (const entry of registered) {
       assert.equal(entry.kind, 'exact', 'a prefix route would catch unrelated paths');
       assert.equal(typeof entry.handler, 'function');
     }
+  });
+});
+
+test('the workspace route answers GET and POST on the same path', async () => {
+  const service = await makeService(false);
+  await withRoutes(service, async ({ call }) => {
+    const read = await call('/plugins/dsh-peer-mcp/workspace', makeRequest());
+    assert.equal(read.status, 200);
+    assert.equal(JSON.parse(read.body).workspace.source, 'default');
+    assert.equal(JSON.parse(read.body).capabilities.runSystemCommand, false);
+
+    const write = await call(
+      '/plugins/dsh-peer-mcp/workspace',
+      makeRequest({ method: 'POST', body: { path: 'C:\\Users\\alice\\DSH Workspace' } }),
+    );
+    assert.equal(write.status, 200);
+    assert.equal(JSON.parse(write.body).workspace.source, 'configured');
   });
 });
 

@@ -74,6 +74,8 @@ export function createSettingsApi({ service }) {
   function routeFor(method, path) {
     const routes = {
       'GET status': async () => ({ status: 200, body: statusBody() }),
+      'GET workspace': async () => ({ status: 200, body: workspaceBody() }),
+      'POST workspace': async (input) => await workspaceRoute(input),
       'POST ticket': async (input) => await ticketRoute(input),
       'POST pair': async (input) => await pairRoute(input),
       'POST revoke': async (input) => await revokeRoute(input),
@@ -89,7 +91,7 @@ export function createSettingsApi({ service }) {
    */
   function methodAllowed(path) {
     const tail = String(path).slice(PREFIX.length + 1);
-    return ['status', 'ticket', 'pair', 'revoke'].includes(tail);
+    return ['status', 'workspace', 'ticket', 'pair', 'revoke'].includes(tail);
   }
 
   /**
@@ -108,6 +110,8 @@ export function createSettingsApi({ service }) {
       // The page must be able to say "a code is live until T" without ever
       // holding the code: this is a polled read.
       ...(status.pending !== undefined && { pending: { until: status.pending.expiresAt, address: status.pending.address } }),
+      workspace: status.workspace,
+      capabilities: status.capabilities,
       peers: status.peers.map((peer) => ({ id: peer.id, name: peer.name, address: peer.address, pairedAt: peer.pairedAt })),
       trustedBy: status.trustedBy.map((peer) => ({
         id: peer.id,
@@ -117,6 +121,23 @@ export function createSettingsApi({ service }) {
         ...(peer.revokedAt !== undefined && { revokedAt: peer.revokedAt }),
       })),
     };
+  }
+
+  function workspaceBody() {
+    const status = service.status();
+    return {
+      ok: true,
+      workspace: status.workspace,
+      capabilities: status.capabilities,
+    };
+  }
+
+  async function workspaceRoute(input) {
+    if (typeof input?.path !== 'string' || input.path.trim() === '') {
+      return { status: 400, body: { ok: false, code: 'workspace-path-missing' } };
+    }
+    const result = service.configureWorkspace({ path: input.path, capabilities: input.capabilities });
+    return { status: 200, body: { ok: true, ...result } };
   }
 
   /**
@@ -140,9 +161,11 @@ export function createSettingsApi({ service }) {
       body: {
         ok: true,
         code: ticket.code,
+        shortCode: ticket.code,
         link: ticket.link,
         expiresAt: ticket.expiresAt,
         preset: preset ?? 'workspace-write',
+        capabilities: service.status().capabilities,
       },
     };
   }
@@ -208,7 +231,7 @@ function statusFor(code) {
   if (code === 'link-malformed' || code === 'link-scheme' || code === 'link-code-missing' || code === 'link-address-missing') {
     return 400;
   }
-  if (code === 'preset-not-allowed' || code === 'id-missing' || code === 'link-missing') return 400;
+  if (code === 'preset-not-allowed' || code === 'id-missing' || code === 'link-missing' || code === 'workspace-path-missing') return 400;
   return 500;
 }
 

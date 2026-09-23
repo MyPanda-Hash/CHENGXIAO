@@ -7,6 +7,30 @@ import { createVerifier } from './auth.js';
 import { createPeerMounts } from './mounts.js';
 import { createPairThrottle, handlePair } from './handshake.js';
 import { startAdapter } from './server.js';
+import { defaultWorkspace } from './config.js';
+
+export const DEFAULT_CAPABILITIES = Object.freeze({
+  readWorkspace: true,
+  writeWorkspace: true,
+  runTask: true,
+  transferFiles: true,
+  runSystemCommand: false,
+  accessOutsideWorkspace: false,
+  modifyDshConfig: false,
+});
+
+export function normalizeCapabilities(input = {}) {
+  return Object.freeze({
+    ...DEFAULT_CAPABILITIES,
+    readWorkspace: input.readWorkspace === false ? false : true,
+    writeWorkspace: input.writeWorkspace === false ? false : true,
+    runTask: input.runTask === false ? false : true,
+    transferFiles: input.transferFiles === false ? false : true,
+    runSystemCommand: false,
+    accessOutsideWorkspace: false,
+    modifyDshConfig: false,
+  });
+}
 
 /**
  * One machine's peer service, in both roles at once.
@@ -141,6 +165,9 @@ export async function createPeerService({
   const trust = await openTrustStore({ home });
   const pairing = await openPairingStore({ home });
   const initiator = await openInitiatorStore({ home, deviceName });
+  let workspacePath = allowedDirs?.[0] ?? defaultWorkspace(home);
+  let workspaceSource = allowedDirs?.[0] === undefined ? 'default' : 'configured';
+  let capabilities = normalizeCapabilities();
 
   let adapter;
   let advertised;
@@ -218,6 +245,8 @@ export async function createPeerService({
         ...(bound !== undefined && { address: bound }),
         installId: trust.identity.installId,
         deviceName: initiator.identity.deviceName,
+        workspace: { path: workspacePath, source: workspaceSource },
+        capabilities,
         ...(pending !== undefined && { pending }),
         // Named from this machine's point of view: `peers` are the machines this
         // one may drive, `trustedBy` are the machines allowed to drive this one.
@@ -236,6 +265,16 @@ export async function createPeerService({
           ...(peer.revokedAt !== undefined && { revokedAt: peer.revokedAt }),
         })),
       };
+    },
+
+    configureWorkspace({ path, capabilities: requested } = {}) {
+      if (typeof path !== 'string' || path.trim() === '') {
+        throw new ServiceError('workspace-path-missing', 'a shared workspace path is required');
+      }
+      workspacePath = path.trim();
+      workspaceSource = 'configured';
+      capabilities = normalizeCapabilities(requested);
+      return { workspace: { path: workspacePath, source: workspaceSource }, capabilities };
     },
 
     async createTicket({ policy, ttlMs } = {}) {

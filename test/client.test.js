@@ -19,16 +19,53 @@ import { readFile } from 'node:fs/promises';
 /** A minimal React stand-in that records the element tree. */
 const makeReactStub = () => {
   const calls = [];
-  return {
+  const stub = {
     calls,
+    /** Values to hand out from useState in order, for rendering tests. */
+    stateValues: [],
     createElement(type, props, ...children) {
-      calls.push({ type: typeof type === 'string' ? type : (type?.name ?? 'component'), props: props ?? {} });
+      // Function components are executed so the recorded tree contains what
+      // they actually render, not just the top-level registration call.
+      if (typeof type === 'function') {
+        const node = type(props ?? {});
+        calls.push({ type: type.name ?? 'component', props: props ?? {}, children: node?.children ?? [] });
+        return node;
+      }
+      calls.push({ type, props: props ?? {}, children });
       return { type, props: props ?? {}, children };
     },
-    useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+    useState: (initial) => {
+      const value =
+        stub.stateValues.length > 0
+          ? stub.stateValues.shift()
+          : typeof initial === 'function'
+            ? initial()
+            : initial;
+      return [value, () => {}];
+    },
     useCallback: (fn) => fn,
     useEffect: () => {},
   };
+  return stub;
+};
+
+/** Flatten every string child of the recorded element tree, in render order. */
+const stringChildren = (calls) => {
+  const flat = [];
+  const walk = (node) => {
+    if (node == null || typeof node === 'boolean') return;
+    if (typeof node === 'string') {
+      flat.push(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    if (typeof node === 'object' && node.children) walk(node.children);
+  };
+  for (const call of calls) walk(call.children);
+  return flat;
 };
 
 /**
@@ -188,3 +225,114 @@ test('the client requires nothing the page module table cannot provide', async (
   // satisfy at runtime.
   assert.deepEqual([...new Set(asked)], ['react'], `the client required: ${asked.join(', ')}`);
 });
+
+test('the page renders the shared workspace and least-privilege capabilities', async () => {
+  const { registrations, react } = await loadClientModule();
+  const exported = moduleOf(registrations, react);
+
+  const injected = [];
+  let render;
+  const ctx = {
+    slots: {
+      inject: (name, factory) => injected.push(factory),
+      register: (_spec, fn) => {
+        render = fn;
+        return () => {};
+      },
+    },
+    locale: { bind: () => (key) => key, register: () => {} },
+  };
+
+  exported.apply(ctx);
+  injected[0]();
+
+  // Status arrives with a default workspace and no peers at all.
+  react.stateValues = [
+    {
+      listening: false,
+      workspace: { path: 'C:\\Users\\alice\\DSH Workspace', source: 'default' },
+      capabilities: {
+        readWorkspace: true,
+        writeWorkspace: true,
+        runTask: true,
+        transferFiles: true,
+        runSystemCommand: false,
+        accessOutsideWorkspace: false,
+        modifyDshConfig: false,
+      },
+      peers: [],
+      trustedBy: [],
+    },
+    null, // ticket
+    '', // link
+    'workspace-write', // preset
+    null, // note
+    false, // busy
+    '', // workspacePath
+  ];
+  render({});
+
+  const text = stringChildren(react.calls);
+  assert.ok(text.some((line) => line.includes('共享工作区')), 'the workspace section must be visible');
+  assert.ok(text.some((line) => line.includes('C:\\Users\\alice\\DSH Workspace')), 'the workspace path must be shown');
+  assert.ok(text.some((line) => line.includes('读取工作区')), 'capabilities must be shown to the operator');
+  assert.ok(
+    text.some((line) => line.includes('尚未连接其他机器')),
+    'an empty peer list must say so instead of hiding the section',
+  );
+});
+
+test('the page renders a human-friendly short code after issuing a ticket', async () => {
+  const { registrations, react } = await loadClientModule();
+  const exported = moduleOf(registrations, react);
+
+  const injected = [];
+  let render;
+  const ctx = {
+    slots: {
+      inject: (name, factory) => injected.push(factory),
+      register: (_spec, fn) => {
+        render = fn;
+        return () => {};
+      },
+    },
+    locale: { bind: () => (key) => key, register: () => {} },
+  };
+
+  exported.apply(ctx);
+  injected[0]();
+
+  react.stateValues = [
+    {
+      listening: true,
+      address: '127.0.0.1:7331',
+      workspace: { path: 'C:\\Users\\alice\\DSH Workspace', source: 'default' },
+      capabilities: {
+        readWorkspace: true,
+        writeWorkspace: true,
+        runTask: true,
+        transferFiles: true,
+        runSystemCommand: false,
+        accessOutsideWorkspace: false,
+        modifyDshConfig: false,
+      },
+      peers: [],
+      trustedBy: [],
+    },
+    { code: 'C7K2M-9QWMP', shortCode: 'C7K2M-9QWMP', link: 'dshp://127.0.0.1:7331/C7K2M-9QWMP', preset: 'workspace-write' },
+    '', // link
+    'workspace-write', // preset
+    null, // note
+    false, // busy
+    '', // workspacePath
+  ];
+  render({});
+
+  const text = stringChildren(react.calls);
+  assert.ok(text.some((line) => line.includes('C7K2M-9QWMP')), 'the short code must be shown large and selectable');
+  assert.ok(
+    text.some((line) => line.includes('完整链接')),
+    'the full link must stay available as the compatibility path',
+  );
+});
+

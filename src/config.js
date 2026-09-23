@@ -16,6 +16,16 @@ export const DEFAULT_PORT = 7331;
 /** Default task template: the DSH on PATH, one Headless task per call. */
 export const DEFAULT_COMMAND = ['dsh', '--profile', 'headless'];
 
+/** Return the isolated collaboration workspace below a user's home directory. */
+export function defaultWorkspace(home, platform = process.platform) {
+  const pathJoin = platform === 'win32' || /^[A-Za-z]:[\\\\]/u.test(home) ? joinWindows : join;
+  return pathJoin(home, 'DSH Workspace');
+}
+
+function joinWindows(home, child) {
+  return home.replace(/[\\\\/]+$/u, '') + '\\' + child;
+}
+
 /** Error with a stable `code` for configuration mistakes. */
 class ConfigError extends Error {
   constructor(code, message) {

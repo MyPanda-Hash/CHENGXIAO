@@ -16,6 +16,10 @@
 #                         bind is what lets a peer on the same network connect;
 #                         the pairing code then advertises the best address this
 #                         machine actually has.
+#   allowedDirs        -- absolute directories a paired peer may work inside.
+#                         When unset, the plugin uses the default shared
+#                         workspace under the user's home (DSH Workspace) and
+#                         never widens the whitelist to the whole home.
 - insert:
     - id: dsh-peer-mcp
       name: 'dsh-peer-mcp'

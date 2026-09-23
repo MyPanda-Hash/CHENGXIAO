@@ -90,6 +90,35 @@ test('every route exists under one plugin prefix, so the page needs no discovery
   }
 });
 
+test('workspace route returns and updates the safe collaboration settings', async () => {
+  const service = await makeIdleService();
+  const api = createSettingsApi({ service });
+  try {
+    const initial = await request(api, 'GET', `${api.prefix}/workspace`);
+    assert.equal(initial.status, 200);
+    assert.equal(initial.body.workspace.source, 'default');
+    assert.equal(initial.body.capabilities.runSystemCommand, false);
+
+    const refused = await request(api, 'POST', `${api.prefix}/workspace`, {
+      path: '',
+      capabilities: { accessOutsideWorkspace: true },
+    });
+    assert.equal(refused.status, 400);
+    assert.equal(refused.body.code, 'workspace-path-missing');
+
+    const updated = await request(api, 'POST', `${api.prefix}/workspace`, {
+      path: 'C:\\Users\\alice\\DSH Workspace',
+      capabilities: { writeWorkspace: false, accessOutsideWorkspace: true },
+    });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.body.workspace.source, 'configured');
+    assert.equal(updated.body.capabilities.writeWorkspace, false);
+    assert.equal(updated.body.capabilities.accessOutsideWorkspace, false);
+  } finally {
+    await service.stop();
+  }
+});
+
 test('an unknown path or method is refused rather than guessed', async () => {
   const api = createSettingsApi({ service: await makeIdleService() });
 
@@ -130,6 +159,8 @@ test('issuing a code returns it exactly once, and the next status read does not'
     assert.equal(issued.status, 200);
     assert.match(issued.body.link, /^dshp:\/\/127\.0\.0\.1:\d+\/[A-Z2-9]{5}-[A-Z2-9]{5}$/u);
     assert.equal(issued.body.preset, 'workspace-write');
+    assert.equal(issued.body.shortCode, issued.body.code);
+    assert.equal(issued.body.capabilities.runSystemCommand, false);
 
     const after = await request(api, 'GET', `${api.prefix}/status`);
     assert.equal(JSON.stringify(after.body).includes(issued.body.code), false);
