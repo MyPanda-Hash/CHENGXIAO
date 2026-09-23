@@ -258,7 +258,13 @@ export async function createPeerService({
       // The handshake and the mount are separate outcomes. Reporting a mount
       // failure as "pairing failed" would be untrue — the other machine already
       // trusts this one, and a retry needs the mount, not a fresh code.
-      if (outcome.ok !== true) return outcome;
+      if (outcome.ok !== true) {
+        // The return value reaches only whoever called the tool. Once the
+        // operator has moved on and is reading the log to find out what went
+        // wrong, an unlogged failure is indistinguishable from no attempt.
+        log(`pairing with ${parsed.address} failed: ${outcome.code}`);
+        return outcome;
+      }
       if (mounts === undefined) {
         return { ...outcome, mounted: false, mountError: { code: 'mounting-unavailable' } };
       }

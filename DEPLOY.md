@@ -108,3 +108,44 @@ mcp__<机器名>__ask  prompt="列出当前工作目录下所有文件及大小�
 | 局域网直连 | 跨 NAT 不通 |
 | 文件走 base64+JSON | 默认上限 5 MiB，大文件请用 Git/共享盘 |
 | 设置页需重启才出现 | 客户端是启动期加载的 |
+
+## 五、连不上对端时怎么查
+
+配对报 `worker-unreachable`（连不上）或 `pairing-timeout`（一直没回应）时，
+**先记住一件事：在 Windows 上，"没有人在监听" 和 "防火墙把包丢了" 从外面看完全一样
+——都不是拒绝，而是一片沉默。** 所以凭现象分不出原因，必须到那台机器上查。
+
+从发起端能确定的只有"那台机器是否还活着"：
+
+```powershell
+Get-NetNeighbor -IPAddress 192.168.0.235 | Select-Object IPAddress, LinkLayerAddress, State
+```
+
+`State = Reachable` 说明机器开着机、在同一个网段（二层通）。**但端口通不通它证明不了。**
+
+剩下的必须到那台机器上跑桌面上的 `诊断配对问题.ps1`。三种常见原因：
+
+| 现象（在那台机器上） | 原因 | 处理 |
+|---|---|---|
+| 没有 DSH 进程 | DSH 没启动 | 先启动 DSH |
+| 有 DSH，但 7331 没在监听 | 插件没装/没启用，或 `listen` 还是 `false` | 见本文第一节、第二节；改完**必须重启** DSH |
+| 在监听，但对端仍连不上 | 防火墙 | 见下 |
+
+### 防火墙的两个坑
+
+1. **网络类别是"公用"（Public）**。Windows 弹授权框时点"允许"，生成的规则默认只覆盖
+   若干配置文件；若当前 Wi-Fi 被判为"公用"，而规则只对"专用"生效，就照样丢包。
+   查：`Get-NetConnectionProfile | Select-Object Name, NetworkCategory`
+   改：`Set-NetConnectionProfile -InterfaceAlias "WLAN" -NetworkCategory Private`（需管理员）
+2. **规则是按程序放的，不是按端口**。授权框点"允许"生成的是 `DSH Desktop` 这条
+   程序规则，**不带端口号**。所以查防火墙时要看程序规则，只按端口 7331 查会漏报，
+   得出"没放行"的错误结论。
+
+验证一条规则是否真的覆盖当前网络：
+
+```powershell
+Get-NetFirewallRule -DisplayName 'DSH Desktop' |
+  Select-Object DisplayName, Enabled, Direction, Action, Profile
+```
+
+`Profile` 必须包含当前网络类别（例如网络是 Public，规则也含 Public）。

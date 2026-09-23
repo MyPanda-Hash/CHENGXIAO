@@ -98,12 +98,40 @@ export async function pairWith({
     });
   } catch (cause) {
     const aborted = cause?.name === 'AbortError';
+    // A bare "fetch failed" tells the operator nothing, and the causes behind it
+    // are ordinary ones they can check in a minute: the other machine is not
+    // listening, something on the path is blocking the port, or the address is
+    // stale. Name them, in the order worth checking.
+    //
+    // The port comes from the link and never from a default: the listening port
+    // is configurable, so advice quoting the wrong number would send the
+    // operator to inspect a port that was never in play. Read off the address
+    // rather than reparsed, because this is a failure path that must not throw.
+    const named = /:(\d+)$/u.exec(link.address);
+    const port = named === null ? '' : named[1];
+    const where = port === '' ? '监听端口' : `${port} 端口`;
+    const probe =
+      port === '' ? '查一下实际监听端口' : `Get-NetTCPConnection -LocalPort ${port} -State Listen`;
+
     return {
       ok: false,
       code: aborted ? 'pairing-timeout' : 'worker-unreachable',
       detail: aborted
-        ? `${link.address} did not answer within ${String(timeoutMs)}ms`
-        : `cannot reach ${link.address}: ${String(cause?.message ?? cause)}`,
+        ? [
+            `向 ${link.address} 发出的连接一直没有回应，${String(timeoutMs)}ms 后放弃。`,
+            '注意：一直没回应并不代表地址是对的。Windows 上「没有人在监听」和「防火墙把包丢了」看起来完全一样——不是被拒绝，而是一片沉默。',
+            `所以两边都要查：那台机器上 DSH 是否在跑、插件是否已加载、${where}是否真的在监听（${probe}）；以及入站 ${where}是否被防火墙拦了。`,
+            '这些都没问题，才轮到「那台机器正忙」这一项，隔一会儿重试即可。',
+            `底层报错：${String(cause?.message ?? cause)}`,
+          ].join('\n   ')
+        : [
+            `连不上 ${link.address}。按这个顺序查：`,
+            '1) 对方是否开着监听——插件默认 listen: false，必须在它的 profile 覆盖层里显式设为 true，改完要重启 DSH；',
+            `2) 对方的 ${where}是否真的在监听（在那台机器上跑 ${probe}）；`,
+            `3) 防火墙是否放行了入站 ${where}（首次监听会有授权框，被忽略就会静默丢弃）；`,
+            '4) 地址是否过期——配对码里的地址是发码时探测的，对方换了网络（换了 Wi-Fi、网线拔插）就会失效，重新发一个码。',
+            `底层报错：${String(cause?.message ?? cause)}`,
+          ].join('\n   '),
     };
   } finally {
     clearTimeout(timer);

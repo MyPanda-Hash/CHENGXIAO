@@ -279,6 +279,40 @@ test('a worker that is not listening refuses pairing instead of pretending', asy
   }
 });
 
+test('a failed outbound pairing is written to the log, not only returned to the caller', async () => {
+  const idle = await createPeerService({
+    home: await newHome(),
+    deviceName: 'idle',
+    executor: fakeExecutor,
+    listen: false,
+    log: quietLog,
+  });
+  const written = [];
+  const initiator = await createPeerService({
+    home: await newHome(),
+    deviceName: 'my-desk',
+    executor: fakeExecutor,
+    listen: false,
+    log: (line) => written.push(line),
+  });
+
+  try {
+    await initiator.pair({ link: 'dshp://127.0.0.1:1/AAAAA-BBBBB' });
+
+    // The return value only reaches whoever called the tool. If the operator is
+    // looking at the log afterwards — which is what happens once they have moved
+    // on and want to know what went wrong — a failure that was never logged is
+    // invisible, and the whole attempt looks like it never happened.
+    const failure = written.find((line) => line.includes('pair'));
+    assert.ok(failure !== undefined, `nothing about the attempt was logged: ${written.join(' | ')}`);
+    assert.match(failure, /worker-unreachable/u, 'the log must carry the failure code');
+    assert.match(failure, /127\.0\.0\.1:1/u, 'the log must name the address that failed');
+  } finally {
+    await initiator.stop();
+    await idle.stop();
+  }
+});
+
 test('pairing mounts the peer immediately, and re-pairing replaces rather than stacks', async () => {
   const worker = await makeWorker({ home: await newHome(), allowedDirs: [tmpdir()] });
   const mounted = [];

@@ -208,6 +208,100 @@ test('an unreachable worker is reported, not thrown as a raw network error', asy
   assert.ok(result.detail.length > 0, 'the operator needs something to act on');
 });
 
+test('an unreachable worker names the causes the operator can actually check', async () => {
+  const store = await openInitiatorStore({ home: await newHome() });
+
+  const result = await pairWith({
+    link: parsePairLink('dshp://127.0.0.1:1/AAAAA-BBBBB'),
+    deviceName: 'my-desk',
+    identity: store.identity,
+    store,
+  });
+
+  // "fetch failed" is what the operator used to get, and it says nothing about
+  // what to do next. The realistic causes are all locally checkable, so the
+  // detail has to name them in the order worth trying, and still carry the
+  // underlying error for the case where none of them is it.
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'worker-unreachable');
+  assert.match(result.detail, /127\.0\.0\.1:1/u, 'the failing address must appear');
+  assert.match(result.detail, /listen/u, 'the listener being off is the first thing to check');
+  assert.match(result.detail, /端口/u, 'the advice must say to look at a port');
+  assert.match(result.detail, /防火墙/u, 'the firewall is the second thing to check');
+  assert.match(result.detail, /配对码/u, 'a stale address is cured by re-issuing a code');
+  // The port is configurable and this link names port 1, so advice that talks
+  // about the default 7331 would send the operator to inspect the wrong port.
+  assert.ok(
+    result.detail.includes('7331') === false,
+    'the advice must not name the default port when the link names another'
+  );
+  assert.match(result.detail, /fetch|ECONN|connect/u, 'the underlying error is preserved');
+});
+
+test('unreachable advice names the port from the link rather than a fixed default', async () => {
+  const store = await openInitiatorStore({ home: await newHome() });
+
+  // Rejecting at the fetch boundary keeps this about the message and not about
+  // whether some port happens to be free on this machine.
+  const refusingFetch = () => Promise.reject(new Error('fetch failed'));
+
+  const result = await pairWith({
+    link: parsePairLink('dshp://127.0.0.1:7999/AAAAA-BBBBB'),
+    deviceName: 'my-desk',
+    identity: store.identity,
+    store,
+    fetchImpl: refusingFetch,
+  });
+
+  assert.equal(result.code, 'worker-unreachable');
+  assert.match(result.detail, /7999/u, 'the port to inspect must come from the link');
+  assert.ok(result.detail.includes('7331') === false, 'the default port is not this link’s port');
+});
+
+test('a worker that never answers is a timeout, distinct from a refused connection', async () => {
+  const store = await openInitiatorStore({ home: await newHome() });
+
+  // Stands in for the network boundary only: it hangs exactly like a port with
+  // nobody behind it, and honours the real signal the caller's AbortController
+  // fires, so the timer under test is the timer in pairWith rather than a fake.
+  const hangingFetch = (_url, init) =>
+    new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => {
+        const error = new Error('This operation was aborted');
+        error.name = 'AbortError';
+        reject(error);
+      });
+    });
+
+  const result = await pairWith({
+    link: parsePairLink('dshp://127.0.0.1:9/AAAAA-BBBBB'),
+    deviceName: 'my-desk',
+    identity: store.identity,
+    store,
+    timeoutMs: 25,
+    fetchImpl: hangingFetch,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'pairing-timeout', 'a hang must not be reported as unreachable');
+  assert.match(result.detail, /127\.0\.0\.1:9/u);
+  assert.match(result.detail, /25/u, 'the window that elapsed must be stated');
+  // A hang is not evidence that the address is good. On Windows a firewall that
+  // drops, and a port with nothing behind it, both look exactly like this — no
+  // RST, no answer. Silently concluding the address must be fine would be false
+  // in the most common case, so the text has to say so out loud rather than
+  // merely avoid the claim.
+  assert.match(
+    result.detail,
+    /不代表.{0,12}地址是正确的|不代表.{0,12}地址是对的|silence.{0,20}not.{0,20}address/u,
+    'a hang must warn that silence does not prove the address is right'
+  );
+  assert.match(result.detail, /listen|监听/u, 'a silent port may simply have no listener');
+  assert.match(result.detail, /防火墙|firewall/u, 'a silent port may be the firewall dropping');
+  assert.match(result.detail, /重试|retry/u, 'a busy machine is still worth retrying');
+  assert.deepEqual(store.listPeers(), [], 'a timed-out pairing must leave nothing behind');
+});
+
 test('re-pairing the same worker replaces its credential instead of duplicating the entry', async () => {
   const { adapter, pairing } = await startWorker();
   const store = await openInitiatorStore({ home: await newHome() });
