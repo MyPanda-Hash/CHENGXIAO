@@ -1,6 +1,6 @@
 {
   "name": "dsh-peer-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Let two DeepSeek Harness machines trade work and files over the network while each machine's files stay where they are, gated by a one-time pairing code.",
   "license": "MIT",
