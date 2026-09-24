@@ -117,7 +117,14 @@ export function createTaskManager({
     // still handled as a rejected run.
     let running;
     try {
-      running = run({ ...record.request, taskId: record.taskId }, { signal: controller.signal });
+      running = run(
+        {
+          ...record.request,
+          taskId: record.taskId,
+          ...(record.meta !== undefined && { meta: record.meta }),
+        },
+        { signal: controller.signal },
+      );
     } catch (cause) {
       running = Promise.reject(cause);
     }
@@ -130,6 +137,7 @@ export function createTaskManager({
         // shape the aborted run settled with.
         record.status = record.cancelRequested ? 'cancelled' : record.result.ok === true ? 'completed' : 'failed';
         append(record, record.status);
+        resolveWaiters(record);
         pump();
       },
       (cause) => {
@@ -137,9 +145,16 @@ export function createTaskManager({
         record.endedAt = clock().toISOString();
         record.status = record.cancelRequested ? 'cancelled' : 'failed';
         append(record, record.status);
+        resolveWaiters(record);
         pump();
       },
     );
+  };
+
+  /** Wake everything waiting for this record's terminal state. */
+  const resolveWaiters = (record) => {
+    for (const waiter of record.waiters ?? []) waiter(summaryOf(record));
+    record.waiters = [];
   };
 
   /** The public summary of a record. */
@@ -212,6 +227,7 @@ export function createTaskManager({
         record.status = 'cancelled';
         record.endedAt = clock().toISOString();
         append(record, 'cancelled');
+        resolveWaiters(record);
         return { ok: true };
       }
 
@@ -222,6 +238,20 @@ export function createTaskManager({
       }
 
       return { ok: false, code: 'task-terminal', detail: `the task already ended as ${record.status}` };
+    },
+
+    /**
+     * Resolve once one task reaches a terminal state. The synchronous ask
+     * compatibility path waits on this instead of polling.
+     */
+    whenSettled(taskId) {
+      const record = tasks.get(taskId);
+      if (record === undefined) return Promise.resolve(undefined);
+      if (TERMINAL.has(record.status) || record.status === 'expired') {
+        return Promise.resolve(summaryOf(record));
+      }
+      record.waiters ??= [];
+      return new Promise((resolve) => record.waiters.push(resolve));
     },
 
     settled: async () => {

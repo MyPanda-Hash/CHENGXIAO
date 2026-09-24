@@ -5,8 +5,10 @@ import { getRequestListener } from '@hono/node-server';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { runAsk } from './ask.js';
+import { REJECT } from './reject.js';
 import { readOutgoing, stageIncoming } from './transfer.js';
 import { TOOLS } from './tools.js';
+import { createTaskManager } from './tasks.js';
 
 /**
  * The HTTP face of the Adapter: one authenticated MCP endpoint that a peer DSH
@@ -34,6 +36,7 @@ const MAX_BODY_BYTES = 8 * 1024 * 1024;
  *   verifier?: (request: unknown) => { ok: boolean, kind?: string, peer?: object, status?: number, code?: string },
  *   auth?: { verifies: (request: unknown) => boolean },
  *   executor: { ask: (input: object) => Promise<object> },
+ *   tasks: { submit: (input: object) => object, statusOf: (taskId: string) => object | undefined, eventsOf: (taskId: string, cursor?: number) => object | undefined, resultOf: (taskId: string) => object | undefined, cancel: (taskId: string) => object, whenSettled: (taskId: string) => Promise<object | undefined> },
  *   stagingDir: string,
  *   allowedDirs?: string[],
  *   defaultCwd?: string,
@@ -49,6 +52,7 @@ export async function startAdapter({
   verifier,
   auth,
   executor,
+  tasks,
   stagingDir,
   allowedDirs,
   defaultCwd = process.cwd(),
@@ -61,7 +65,28 @@ export async function startAdapter({
   await mkdir(stagingDir, { recursive: true });
 
   const identify = toVerifier(verifier, auth);
-  const deps = { executor, stagingDir, defaultCwd, defaultAllowedDirs: allowedDirs, maxBytes };
+  // A caller that wires no manager (the standalone bin, direct unit tests)
+  // still gets a working one: the ask/submit surface is not optional. The
+  // service passes its own so both ingress paths share a single queue.
+  const manager =
+    tasks ??
+    createTaskManager({
+      run: (task, { signal }) =>
+        runAsk(
+          {
+            prompt: task.prompt,
+            ...(task.cwd !== undefined && { cwd: task.cwd }),
+            ...(task.timeoutMs !== undefined && { timeoutMs: task.timeoutMs }),
+          },
+          {
+            executor,
+            defaultCwd,
+            policy: task.meta?.policy ?? { allowedDirs: allowedDirs ?? [defaultCwd] },
+          },
+          { signal },
+        ),
+    });
+  const deps = { executor, stagingDir, defaultCwd, defaultAllowedDirs: allowedDirs, maxBytes, tasks: manager };
   const listener = createMcpListener(deps, log);
 
   const http = createServer((req, res) => {
@@ -232,15 +257,71 @@ function buildMcpServer(deps, caller) {
  * @returns {Promise<{ content: { type: 'text', text: string }[], isError?: true }>} the tool result.
  */
 async function dispatch(name, args, deps) {
-  const { executor, stagingDir, defaultCwd, maxBytes, caller } = deps;
+  const { executor, stagingDir, defaultCwd, maxBytes, caller, tasks } = deps;
   const allowedDirs = deps.caller?.peer?.policy?.allowedDirs ?? deps.defaultAllowedDirs;
   const policy = { allowedDirs };
 
   try {
-    if (name === 'ask') {
-      const answer = await runAsk(args, { executor, defaultCwd, policy });
-      if (answer.ok !== true) return asError(answer.code, answer.detail);
+    // ask and submit_task share one submission path: the policy check runs at
+    // submit time so a refusal never creates a task, and the caller's policy
+    // travels with the task for the run itself.
+    if (name === 'ask' || name === 'submit_task') {
+      const rejection = REJECT({ prompt: args?.prompt, cwd: args?.cwd ?? defaultCwd }, policy);
+      if (rejection !== undefined) return asError(rejection.code, rejection.detail);
+
+      const submitted = tasks.submit({
+        request: {
+          prompt: args.prompt,
+          ...(args?.cwd !== undefined && { cwd: args.cwd }),
+          ...(args?.timeoutMs !== undefined && { timeoutMs: args.timeoutMs }),
+        },
+        ...(args?.idempotencyKey !== undefined && { idempotencyKey: args.idempotencyKey }),
+        meta: { policy },
+      });
+
+      if (name === 'submit_task') return asText({ ok: true, ...submitted });
+
+      // ask, the compatibility wrapper: one task, waited out, same shape as
+      // before the async protocol existed.
+      await tasks.whenSettled(submitted.taskId);
+      const answer = tasks.resultOf(submitted.taskId);
+      if (answer === undefined || answer.ok !== true) {
+        const refusal = answer ?? { code: 'task-lost', detail: 'the task ended without a result' };
+        return asError(refusal.code, refusal.detail);
+      }
       return asText(answer);
+    }
+
+    if (name === 'task_status') {
+      const taskId = String(args?.taskId ?? '');
+      const status = tasks.statusOf(taskId);
+      if (status === undefined) return asError('task-unknown', `no task with id ${taskId}`);
+      return asText({ ok: true, ...status });
+    }
+
+    if (name === 'task_events') {
+      const taskId = String(args?.taskId ?? '');
+      const cursor = Number.isInteger(args?.cursor) && (args?.cursor ?? 0) >= 0 ? args.cursor : 0;
+      const read = tasks.eventsOf(taskId, cursor);
+      if (read === undefined) return asError('task-unknown', `no task with id ${taskId}`);
+      return asText({ ok: true, ...read });
+    }
+
+    if (name === 'task_result') {
+      const taskId = String(args?.taskId ?? '');
+      const status = tasks.statusOf(taskId);
+      if (status === undefined) return asError('task-unknown', `no task with id ${taskId}`);
+      if (status.status === 'expired') return asError('task-expired', 'the result passed its retention window');
+      const result = tasks.resultOf(taskId);
+      if (result === undefined) return asError('task-not-terminal', `the task is still ${status.status}`);
+      return asText(result);
+    }
+
+    if (name === 'cancel_task') {
+      const taskId = String(args?.taskId ?? '');
+      const outcome = tasks.cancel(taskId);
+      if (outcome.ok !== true) return asError(outcome.code, outcome.detail);
+      return asText({ ok: true, taskId, cancelled: true });
     }
 
     if (name === 'fetch_file') {

@@ -68,7 +68,16 @@ test('a peer that presents the shared key can list and call tools', async () => 
 
       const { tools } = await client.listTools();
       const names = tools.map((tool) => tool.name).sort();
-      assert.deepEqual(names, ['ask', 'fetch_file', 'send_file']);
+      assert.deepEqual(names, [
+        'ask',
+        'cancel_task',
+        'fetch_file',
+        'send_file',
+        'submit_task',
+        'task_events',
+        'task_result',
+        'task_status',
+      ]);
 
       const result = await client.callTool({
         name: 'ask',
@@ -173,7 +182,7 @@ test('a paired peer reaches the tools with its own credential', async () => {
       const { tools } = await client.listTools();
       assert.deepEqual(
         tools.map((tool) => tool.name).sort(),
-        ['ask', 'fetch_file', 'send_file'],
+        ['ask', 'cancel_task', 'fetch_file', 'send_file', 'submit_task', 'task_events', 'task_result', 'task_status'],
       );
     });
   });
@@ -208,7 +217,7 @@ test('revoking a peer closes the door without restarting the Adapter', async () 
   await withPairedAdapter({ policy: { preset: 'workspace-write' } }, async ({ url, credential, peer, trust }) => {
     await withClient(url, credential, async (client, transport) => {
       await client.connect(transport);
-      assert.deepEqual((await client.listTools()).tools.length, 3);
+      assert.deepEqual((await client.listTools()).tools.length, 8);
 
       await trust.revokePeer(peer.id);
     });
@@ -291,7 +300,7 @@ test('the whole journey works over HTTP: pair, then use the credential', async (
     await withClient(`${origin}/mcp`, answer.credential, async (client, transport) => {
       await client.connect(transport);
       const { tools } = await client.listTools();
-      assert.equal(tools.length, 3);
+      assert.equal(tools.length, 8);
 
       const asked = await client.callTool({
         name: 'ask',

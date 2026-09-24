@@ -66,5 +66,103 @@ export const sendFileTool = {
   },
 };
 
+/** Submit a task asynchronously and get a task id back immediately. */
+export const submitTaskTool = {
+  name: 'submit_task',
+  config: {
+    title: 'Submit a task',
+    description:
+      'Submit one task like ask, but return a task id immediately instead of waiting for the answer. ' +
+      'Poll task_status / task_events, fetch task_result once terminal, cancel with cancel_task. ' +
+      'The same idempotencyKey always maps to the same task, so a retry never runs the work twice.',
+    inputSchema: {
+      prompt: z.string().min(1).describe('The task, phrased as you would type it into DSH.'),
+      cwd: z
+        .string()
+        .optional()
+        .describe('Absolute working directory for the task. Must be inside the allowed directories.'),
+      timeoutMs: z.number().int().positive().optional().describe('Override the task ceiling in milliseconds.'),
+      idempotencyKey: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Stable key of the logical operation; resubmitting it returns the existing task.'),
+    },
+    annotations: { readOnlyHint: false, openWorldHint: true },
+  },
+};
+
+/** Ask where one task stands. */
+export const taskStatusTool = {
+  name: 'task_status',
+  config: {
+    title: 'Task status',
+    description:
+      "Report one task's state: queued, running, completed, failed, cancelled or expired. " +
+      'Survives disconnects — the state lives on the machine running the task.',
+    inputSchema: {
+      taskId: z.string().min(1).describe('The task id returned by submit_task.'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+};
+
+/** Read one task's lifecycle events since a cursor. */
+export const taskEventsTool = {
+  name: 'task_events',
+  config: {
+    title: 'Task events',
+    description:
+      "Return the task's lifecycle events (submitted, started, completed, failed, cancelled, expired) after the cursor, plus the next cursor. Incremental: pass nextCursor back on the next call.",
+    inputSchema: {
+      taskId: z.string().min(1).describe('The task id returned by submit_task.'),
+      cursor: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe('Event cursor from a previous call; omit to read from the start.'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+};
+
+/** Fetch one task's terminal result. */
+export const taskResultTool = {
+  name: 'task_result',
+  config: {
+    title: 'Task result',
+    description:
+      "Return the finished task's answer in the same shape ask would have returned. Refuses with task-not-terminal while it still runs.",
+    inputSchema: {
+      taskId: z.string().min(1).describe('The task id returned by submit_task.'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+};
+
+/** Cancel one task. */
+export const cancelTaskTool = {
+  name: 'cancel_task',
+  config: {
+    title: 'Cancel a task',
+    description:
+      'Cancel one task: a queued task is skipped without running; a running task is killed. Cancellation is immediate and the task ends as cancelled.',
+    inputSchema: {
+      taskId: z.string().min(1).describe('The task id returned by submit_task.'),
+    },
+    annotations: { readOnlyHint: false, openWorldHint: false },
+  },
+};
+
 /** Every tool the Adapter serves, in registration order. */
-export const TOOLS = [askTool, fetchFileTool, sendFileTool];
+export const TOOLS = [
+  askTool,
+  submitTaskTool,
+  taskStatusTool,
+  taskEventsTool,
+  taskResultTool,
+  cancelTaskTool,
+  fetchFileTool,
+  sendFileTool,
+];

@@ -11,6 +11,8 @@ import { startAdapter } from './server.js';
 import { createRelayClient } from './relay/client.js';
 import { createRelayProxy } from './relay/proxy.js';
 import { generateKeyPair, deriveSessionKey, seal, open, encodeKey, parseKey } from './relay/crypto.js';
+import { createTaskManager } from './tasks.js';
+import { runAsk } from './ask.js';
 import { defaultWorkspace } from './config.js';
 
 export const DEFAULT_CAPABILITIES = Object.freeze({
@@ -173,6 +175,23 @@ export async function createPeerService({
   let workspacePath = allowedDirs?.[0] ?? defaultWorkspace(home);
   let workspaceSource = allowedDirs?.[0] === undefined ? 'default' : 'configured';
   let capabilities = normalizeCapabilities();
+
+  // The async task manager: one instance for the whole service, so both
+  // ingress paths (direct listener and relay replay) share one queue, one
+  // idempotency index and one concurrency budget. The caller's policy travels
+  // with each task as submit-time metadata; the executor stays this service's.
+  const tasks = createTaskManager({
+    run: (task, { signal }) =>
+      runAsk(
+        { prompt: task.prompt, ...(task.cwd !== undefined && { cwd: task.cwd }), ...(task.timeoutMs !== undefined && { timeoutMs: task.timeoutMs }) },
+        {
+          executor,
+          defaultCwd: process.cwd(),
+          policy: task.meta?.policy ?? { allowedDirs: allowedDirs ?? [process.cwd()] },
+        },
+        { signal },
+      ),
+  });
 
   let adapter;
   let advertised;
@@ -455,6 +474,7 @@ export async function createPeerService({
     adapter = await startAdapter({
       verifier: createVerifier({ trust }),
       executor,
+      tasks,
       stagingDir: `${home}/dsh-peer/incoming`,
       allowedDirs: allowedDirs ?? [process.cwd()],
       defaultCwd: process.cwd(),
@@ -514,6 +534,7 @@ export async function createPeerService({
     replayAdapter = await startAdapter({
       verifier: createVerifier({ trust }),
       executor,
+      tasks,
       stagingDir: `${home}/dsh-peer/incoming`,
       allowedDirs: allowedDirs ?? [process.cwd()],
       defaultCwd: process.cwd(),

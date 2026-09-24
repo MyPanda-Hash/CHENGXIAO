@@ -142,7 +142,31 @@ dsh plugin --profile <你的 profile> add github:MyPanda-Hash/CHENGXIAO
 **四个工具里没有任何一个能打开监听口或放宽权限。** 是否对外暴露只能改配置 ——
 这一条有测试盯着（加个叫 `peer_listen` 的工具就会红）。
 
-对端侧另有三条受策略约束的工具：`ask`（跑一个任务）、`fetch_file`、`send_file`。
+对端侧（被驱动的机器）提供八个工具：同步兼容入口 `ask`、异步任务 `submit_task` /
+`task_status` / `task_events` / `task_result` / `cancel_task`，以及 `fetch_file`、`send_file`。
+
+## 异步任务
+
+长任务推荐走异步流程：提交立即返回 `taskId`，不占住调用方当前回合：
+
+```text
+submit_task(prompt, cwd?, timeoutMs?, idempotencyKey?) → { taskId, status }
+  ├─ task_status(taskId)           → queued | running | completed | failed | cancelled | expired
+  ├─ task_events(taskId, cursor?)  → 生命周期事件 + nextCursor（增量读取）
+  ├─ task_result(taskId)           → 终态结果（与 ask 同形状）；运行中返回 task-not-terminal
+  └─ cancel_task(taskId)           → 取消排队中（跳过不执行）或运行中（击杀进程）的任务
+```
+
+要点：
+
+- **状态在执行任务的设备上**：调用方断线重连后凭 `taskId` 继续查询；中继转发请求但不持有任务状态。
+- **幂等**：同一 `idempotencyKey` 重复提交返回同一任务，网络重试不会重复执行。
+- **保留期**：终态结果默认保留 24 小时，之后标记 `expired` 并释放结果内容。
+- **并发**：每台 worker 默认同时运行 1 个任务（一个完整 agent 回合），后续排队。
+- **兼容**：`ask` 保留原形状与超时语义——内部提交异步任务、等待终态、返回原有结果；旧调用方零迁移。
+
+事件是生命周期事件（`submitted` / `started` / `completed` / `failed` / `cancelled` / `expired`），
+不伪造百分比进度。
 
 ## 安全模型
 
@@ -181,17 +205,17 @@ dsh plugin --profile <你的 profile> add github:MyPanda-Hash/CHENGXIAO
 
 1. **每次 `ask` 都是冷启动**，且**无跨调用记忆**（每次 `dsh --profile headless` 都是新会话）。
    要常驻会话需改走 `--profile sdk`，尚未实现。
-2. **一个任务跑完才返回**：MCP 工具调用是同步等待，长任务会占住调用方那一轮。
-   超时会被杀掉且不留孤儿进程（已实测）。
+2. **同步入口 `ask` 仍会等到任务完成**：长任务要避免占住回合请用 `submit_task` 异步流程
+   （提交立即返回 `taskId`，凭它查状态/事件/结果、随时取消）；两个入口跑的是同一套任务机制。
 3. **文件走 base64 + JSON**，体积膨胀约 33%，默认上限 5 MiB。大文件请用 Git / 共享盘。
-4. **局域网直连**：跨 NAT 不通，需要中继或组网（Tailscale 之类），本版不做。
+4. **局域网直连或自托管中继**：直连跨 NAT 不通，需部署中继（见「跨网络：中继模式」）或组网。
 5. **Windows 上 `dsh` 是 `.cmd` 外壳**，Node 拒绝直接 spawn。插件会自动解析成真实可执行文件；
    若解析失败，启动日志会明确说明，`ask` 也会给出可行动的报错而不是 `ENOENT`。
 
 ## 验证
 
 ```sh
-node --test test/                    # 162 个测试，不联网、不调用模型
+node --test test/                    # 243 个测试，不联网、不调用模型
 node scripts/verify-host-load.mjs    # 用真实 Cordis 上下文跑一遍 apply()
 node scripts/verify-host-load.mjs --profile desktop   # 验证已安装副本
 node scripts/prepare-release.mjs     # 产出干净发布树（并断言没有 node_modules）
