@@ -217,7 +217,9 @@ const landed = await service.fetchPeerFile('desk', 'D:\\shared\\dataset.bin', 'C
 
 ## 实测数据
 
-在一台 Windows 机器上用两个 DSH 实例实跑（2026-09-23）：
+### 直连基线（2026-09-23）
+
+在一台 Windows 机器上用两个 DSH 实例实跑（局域网直连路径）：
 
 | 项 | 实测 |
 |---|---|
@@ -227,9 +229,39 @@ const landed = await service.fetchPeerFile('desk', 'D:\\shared\\dataset.bin', 'C
 | `fetch_file` → `send_file` | SHA256 双向一致，落盘逐字节相同 |
 | 白名单负向测试 | 白名单外路径被拒（`path-not-allowed`），不是静默返回 |
 
+### 全链路（中继 + 异步任务 + 分片传输，2026-09-24）
+
+同一台 Windows 机器上的**两个完全隔离 service 实例**（独立身份与信任库）经
+**Docker 容器中继**（仓库镜像，独立网络命名空间）跑通全部新链路。执行器为真实
+子进程、固定 8 秒应答（与真实 agent 回合同量级），以剥离模型推理的随机性、
+单独度量协议栈开销；全部数值为真实墙钟时间，字节一致性校验通过：
+
+| 环节 | 耗时 | 备注 |
+|---|---|---|
+| service 启动 + 中继注册 | 71 / 11 ms | 双端各一次出站注册 |
+| 生成 `dshr` 配对码 | 3 ms | |
+| **经中继配对**（X25519 握手 + 密封应答） | **108 ms** | 中继全程只见密文 |
+| `ask`（同步兼容入口） | 8,192 ms | 8s 任务本体 + **约 190 ms 全链路往返开销** |
+| `submit_task`（异步提交） | **59 ms** | 立即返回，调用方回合不被占用 |
+| `submit_task` → 轮询至结果就绪 | 8,343 ms | 任务本体占绝对大头 |
+| `cancel_task`（击杀运行中子进程） | 60 ms | |
+| `fetchPeerFile`（12 MiB 分片拉取） | 1,844 ms | **6.5 MiB/s**，12 块 |
+| `sendPeerFile`（12 MiB 分片推送） | 1,919 ms | **6.3 MiB/s** |
+| `fetch_file`（4 MiB 整文件，对照） | 400 ms | 旧通道走同一中继路径 |
+
+> 环境与复现：win32 10.0.26340、node v20.19.5、中继 = `dsh-peer-relay` 容器。
+> 本表为**同机双实例 + 容器化中继**的协议开销度量（网络跳为本机容器 NAT，不含真实
+> 广域网往返）；跨真机/VPS 复现用同一脚本：
+>
+> ```sh
+> docker compose -f docker-compose.relay.yml up -d   # 在 VPS 上
+> node scripts/measure-full-chain.mjs --relay http://<VPS>:7332 --mib 12
+> ```
+
 **关于延迟**：`ask` 付的是一次完整 agent 回合的代价（独立适配器直测简单问答约 4.3 s，
 第二次 3.8 s —— 固定开销，不随次数变快）。适合"让另一台机器干活并拿结论"，
-不适合高频细粒度往返。
+不适合高频细粒度往返；长任务用 `submit_task` 异步提交（约 60 ms 返回），大文件走
+分片通道（实测 6 MiB/s 量级，经中继端到端加密）。
 
 ## 限制
 
