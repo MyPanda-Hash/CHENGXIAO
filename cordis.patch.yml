@@ -21,11 +21,11 @@
 #                         workspace under the user's home (DSH Workspace) and
 #                         never widens the whitelist to the whole home.
 #   relayEnabled       -- pair and serve through a relay instead of a direct
-#                         listener. Off by default; the relay is a separate
-#                         process (see src/relay-server-bin.js) that forwards
-#                         only end-to-end-encrypted envelopes and persists
-#                         nothing. When on, relayUrl must name it, and this
-#                         machine needs no inbound port at all.
+#                         listener. Off by default. When on without a
+#                         relayUrl, the plugin routes through the official
+#                         public relay (src/config.js OFFICIAL_RELAY_URL), so
+#                         a fresh install needs no infrastructure of its own;
+#                         name a relayUrl to self-host instead.
 #   relayUrl           -- http(s) origin of the relay, e.g. https://relay.example.com
 #   relayDeviceId      -- optional stable id this machine registers as at the
 #                         relay; defaults to the install id.

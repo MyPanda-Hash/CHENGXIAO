@@ -45,7 +45,23 @@ docker run -d --name dsh-peer-relay -p 7332:7332 dsh-peer-relay
 | TLS | 生产建议前置反向代理（Caddy/Nginx）做 HTTPS；通道本身端到端加密，TLS 保护的是注册面 |
 | 升级 | 换镜像重启即可，无状态迁移 |
 
-## 零配置快速开始（同一局域网）
+## 零配置快速开始（推荐：官方中继，任何网络）
+
+1. 两台机器都在 profile 覆盖层写入（改完重启 DSH）：
+
+   ```yaml
+   - id: dsh-peer-mcp
+     config:
+       relayEnabled: true
+   ```
+
+   不填 `relayUrl` 即自动使用**官方公共中继**（阿里云常驻服务，`/health` 可探活；
+   只转发端到端加密信封，不落盘）。工作区默认 `%USERPROFILE%\DSH Workspace`。
+
+2. 干活端 `设置 → 设备互联` → 「生成配对码」→ 发起端粘贴 `dshr://` 链接 → 配对
+   → `mcp__<机器名>__ask` 等工具立即可用。
+
+## 零配置快速开始（同一局域网直连）
 
 1. 跑 `.\install-peer.ps1 -AllowedDirs "C:\Users\<用户名>\DSH Workspace"`（或省略
    `-AllowedDirs`，插件会使用默认共享工作区 `%USERPROFILE%\DSH Workspace`）。

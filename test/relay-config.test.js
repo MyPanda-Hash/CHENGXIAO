@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { readConfig } from '../src/config.js';
 import { Config } from '../lib/plugin.js';
 import { createPeerService } from '../src/service.js';
+import { OFFICIAL_RELAY_URL } from '../src/config.js';
 
 const KEY = '0123456789abcdef0123456789abcdef';
 
@@ -49,9 +50,15 @@ test('the plugin schema accepts relay settings and rejects a malformed URL', () 
   assert.ok(bad.issues.length > 0, 'a malformed relay URL must fail at load time');
 });
 
-test('the schema refuses relay enabled without a URL', () => {
-  const bad = Config['~standard'].validate({ relayEnabled: true });
-  assert.ok(bad.issues.length > 0, 'relay enabled with no relay to reach is a configuration error');
+test('the schema defaults to the official relay when none is named', () => {
+  const result = Config['~standard'].validate({ relayEnabled: true });
+  assert.equal(result.issues, undefined);
+  assert.equal(result.value.relayUrl, OFFICIAL_RELAY_URL, 'relay on with no URL routes through the official relay');
+
+  // Off stays off: the default must not wire a relay into a disabled config.
+  const off = Config['~standard'].validate({});
+  assert.equal(off.value.relayEnabled, false);
+  assert.equal(off.value.relayUrl, undefined);
 });
 
 test('a relay-enabled service with no relay reachable fails loudly at startup', async () => {

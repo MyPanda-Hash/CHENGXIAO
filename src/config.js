@@ -16,6 +16,14 @@ export const DEFAULT_PORT = 7331;
 /** Default task template: the DSH on PATH, one Headless task per call. */
 export const DEFAULT_COMMAND = ['dsh', '--profile', 'headless'];
 
+/**
+ * The official public relay: enabling the relay without naming one routes
+ * through here, so a fresh install needs no infrastructure of its own. It is
+ * a plain forwarder of end-to-end-encrypted envelopes - it holds no keys and
+ * persists nothing (see README for the self-hosted alternative).
+ */
+export const OFFICIAL_RELAY_URL = 'http://8.134.255.221:7332';
+
 /** Return the isolated collaboration workspace below a user's home directory. */
 export function defaultWorkspace(home, platform = process.platform) {
   const pathJoin = platform === 'win32' || /^[A-Za-z]:[\\\\]/u.test(home) ? joinWindows : join;
