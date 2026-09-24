@@ -1,8 +1,0 @@
-{
-  "link": "dshr://8.134.255.221:7332/measure-worker-iZ7xv8sgv7crd0e0gghp8sZ/2P4FV-ZVFNX",
-  "relayUrl": "http://8.134.255.221:7332",
-  "datasetPath": "/tmp/measure-remote-ws-7LiPkO/dataset.bin",
-  "smallPath": "/tmp/measure-remote-ws-7LiPkO/small.bin",
-  "cwd": "/tmp/measure-remote-ws-7LiPkO",
-  "environment": "linux @ iZ7xv8sgv7crd0e0gghp8sZ, node v20.20.2"
-}
