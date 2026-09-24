@@ -1,5 +1,12 @@
 # dsh-peer-mcp
 
+[![GitHub stars](https://img.shields.io/github/stars/MyPanda-Hash/CHENGXIAO.svg?style=social)](https://github.com/MyPanda-Hash/CHENGXIAO/stargazers)
+[![version](https://img.shields.io/badge/version-0.2.0-c0392b.svg)](https://github.com/MyPanda-Hash/CHENGXIAO/releases)
+[![tests](https://img.shields.io/badge/tests-262%20pass-brightgreen.svg)](#验证)
+
+> 用得顺手就[点个 Star](https://github.com/MyPanda-Hash/CHENGXIAO/stargazers) ——
+> 市场搜索按星排序，一颗星直接决定别人能不能搜到它。
+
 **让两台电脑上的 DSH 互相干活、互相传文件 —— 而各自的文件始终留在本机。**
 
 不再用截图 + 模拟键盘去驱动另一台机器。装好这个插件后，A 机的 agent 可以把 B 机当成
