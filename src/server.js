@@ -9,6 +9,7 @@ import { REJECT } from './reject.js';
 import { readOutgoing, stageIncoming } from './transfer.js';
 import { TOOLS } from './tools.js';
 import { createTaskManager } from './tasks.js';
+import { createReadSessions, createReceiveSessions } from './transfer-sessions.js';
 
 /**
  * The HTTP face of the Adapter: one authenticated MCP endpoint that a peer DSH
@@ -65,6 +66,25 @@ export async function startAdapter({
   await mkdir(stagingDir, { recursive: true });
 
   const identify = toVerifier(verifier, auth);
+
+  // Transfer sessions are isolated per caller: a transferId opened under one
+  // peer's policy cannot be driven by another, and one noisy peer's sessions
+  // cannot crowd out another's. The registry is keyed by the caller's stable
+  // identity (peer id when paired, kind otherwise).
+  const transferManagers = new Map();
+  const transfersFor = (caller, callerAllowedDirs) => {
+    const key = caller?.peer?.id ?? caller?.kind ?? 'anonymous';
+    let entry = transferManagers.get(key);
+    if (entry === undefined) {
+      entry = {
+        reads: createReadSessions({ allowedDirs: callerAllowedDirs }),
+        receives: createReceiveSessions({ stagingDir }),
+      };
+      transferManagers.set(key, entry);
+    }
+    return entry;
+  };
+
   // A caller that wires no manager (the standalone bin, direct unit tests)
   // still gets a working one: the ask/submit surface is not optional. The
   // service passes its own so both ingress paths share a single queue.
@@ -86,7 +106,15 @@ export async function startAdapter({
           { signal },
         ),
     });
-  const deps = { executor, stagingDir, defaultCwd, defaultAllowedDirs: allowedDirs, maxBytes, tasks: manager };
+  const deps = {
+    executor,
+    stagingDir,
+    defaultCwd,
+    defaultAllowedDirs: allowedDirs,
+    maxBytes,
+    tasks: manager,
+    transfers: transfersFor,
+  };
   const listener = createMcpListener(deps, log);
 
   const http = createServer((req, res) => {
@@ -331,6 +359,50 @@ async function dispatch(name, args, deps) {
         ...(maxBytes !== undefined && { maxBytes }),
       });
       return asText(file);
+    }
+
+    // The chunked channel: read sessions serve a local file, receive
+    // sessions assemble a peer's file. Both live in the caller's own
+    // registry, so policy and session ids never leak across peers.
+    if (name === 'open_read' || name === 'read_chunk' || name === 'close_read') {
+      const { reads } = deps.transfers(caller, allowedDirs);
+      if (name === 'open_read') {
+        const opened = await reads.open({ path: /** @type {string} */ (args.path) });
+        return asText({ ok: true, ...opened });
+      }
+      if (name === 'read_chunk') {
+        const chunk = await reads.chunk(String(args?.transferId ?? ''), /** @type {number} */ (args.index));
+        return asText({ ok: true, ...chunk });
+      }
+      const closed = await reads.close(String(args?.transferId ?? ''));
+      return asText({ ok: true, ...closed });
+    }
+
+    if (name === 'send_begin' || name === 'send_chunk' || name === 'send_finish' || name === 'send_cancel') {
+      const { receives } = deps.transfers(caller, allowedDirs);
+      if (name === 'send_begin') {
+        const begun = await receives.begin({
+          name: /** @type {string} */ (args.name),
+          bytes: /** @type {number} */ (args.bytes),
+          sha256: /** @type {string} */ (args.sha256),
+        });
+        return asText({ ok: true, ...begun });
+      }
+      if (name === 'send_chunk') {
+        const accepted = await receives.chunk({
+          transferId: String(args?.transferId ?? ''),
+          index: /** @type {number} */ (args.index),
+          data: /** @type {string} */ (args.data),
+          sha256: /** @type {string} */ (args.sha256),
+        });
+        return asText({ ok: true, ...accepted });
+      }
+      if (name === 'send_finish') {
+        const landed = await receives.finish(String(args?.transferId ?? ''));
+        return asText({ ok: true, ...landed });
+      }
+      const cancelled = await receives.cancel(String(args?.transferId ?? ''));
+      return asText({ ok: true, ...cancelled });
     }
 
     if (name === 'send_file') {

@@ -155,6 +155,111 @@ export const cancelTaskTool = {
   },
 };
 
+/** Open a chunked read of one local file. */
+export const openReadTool = {
+  name: 'open_read',
+  config: {
+    title: 'Open a chunked read',
+    description:
+      'Open one file for chunked reading: returns a transferId with the size, whole-file sha256 and chunk geometry. ' +
+      'Chunks are then read with read_chunk in any order and as often as needed (that is how a dropped link resumes). ' +
+      'The path must be inside the allowed directories; files up to 100 MiB.',
+    inputSchema: {
+      path: z.string().min(1).describe('Absolute path of the file to read.'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+};
+
+/** Read one chunk of an open read session. */
+export const readChunkTool = {
+  name: 'read_chunk',
+  config: {
+    title: 'Read one chunk',
+    description:
+      'Return one chunk of an open read session as base64 with its sha256. Any index, any order, re-readable; verify each chunk and the whole-file digest from open_read.',
+    inputSchema: {
+      transferId: z.string().min(1).describe('The transfer id returned by open_read.'),
+      index: z.number().int().nonnegative().describe('Chunk index, 0-based.'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+};
+
+/** Close a read session. */
+export const closeReadTool = {
+  name: 'close_read',
+  config: {
+    title: 'Close a read session',
+    description: 'Release a read session. Idle sessions are also swept automatically after ten minutes.',
+    inputSchema: {
+      transferId: z.string().min(1).describe('The transfer id returned by open_read.'),
+    },
+    annotations: { readOnlyHint: false, openWorldHint: false },
+  },
+};
+
+/** Begin a chunked receive into this machine staging. */
+export const sendBeginTool = {
+  name: 'send_begin',
+  config: {
+    title: 'Begin a chunked send',
+    description:
+      'Begin assembling a file on this machine: declare the name, exact byte size and whole-file sha256. ' +
+      'Chunks then arrive with send_chunk, in any order, re-sent freely; send_finish lands the file only after the digest verifies.',
+    inputSchema: {
+      name: z.string().min(1).describe('Suggested file name, reduced to a safe basename.'),
+      bytes: z.number().int().nonnegative().describe('Exact total size in bytes.'),
+      sha256: z.string().regex(/^[0-9a-f]{64}$/u).describe('Lowercase hex sha256 of the whole file.'),
+    },
+    annotations: { readOnlyHint: false, openWorldHint: false },
+  },
+};
+
+/** Deliver one chunk of a chunked send. */
+export const sendChunkTool = {
+  name: 'send_chunk',
+  config: {
+    title: 'Send one chunk',
+    description:
+      'Deliver one chunk of an open receive session: base64 bytes with their sha256 and 0-based index. Idempotent per index, so a dropped link resumes by re-sending.',
+    inputSchema: {
+      transferId: z.string().min(1).describe('The transfer id returned by send_begin.'),
+      index: z.number().int().nonnegative().describe('Chunk index, 0-based.'),
+      data: z.string().min(1).describe('Base64 of the chunk bytes.'),
+      sha256: z.string().regex(/^[0-9a-f]{64}$/u).describe('Lowercase hex sha256 of these chunk bytes.'),
+    },
+    annotations: { readOnlyHint: false, openWorldHint: false },
+  },
+};
+
+/** Finish a chunked receive and land the file. */
+export const sendFinishTool = {
+  name: 'send_finish',
+  config: {
+    title: 'Finish a chunked send',
+    description:
+      'Verify the assembled file against the declared sha256 and land it in staging atomically, never overwriting an existing name. Refuses with transfer-incomplete until every chunk arrived.',
+    inputSchema: {
+      transferId: z.string().min(1).describe('The transfer id returned by send_begin.'),
+    },
+    annotations: { readOnlyHint: false, openWorldHint: false },
+  },
+};
+
+/** Cancel a chunked receive. */
+export const sendCancelTool = {
+  name: 'send_cancel',
+  config: {
+    title: 'Cancel a chunked send',
+    description: 'Abandon a receive session and delete its temp file. Nothing lands in staging.',
+    inputSchema: {
+      transferId: z.string().min(1).describe('The transfer id returned by send_begin.'),
+    },
+    annotations: { readOnlyHint: false, openWorldHint: false },
+  },
+};
+
 /** Every tool the Adapter serves, in registration order. */
 export const TOOLS = [
   askTool,
@@ -165,4 +270,11 @@ export const TOOLS = [
   cancelTaskTool,
   fetchFileTool,
   sendFileTool,
+  openReadTool,
+  readChunkTool,
+  closeReadTool,
+  sendBeginTool,
+  sendChunkTool,
+  sendFinishTool,
+  sendCancelTool,
 ];

@@ -71,8 +71,15 @@ test('a peer that presents the shared key can list and call tools', async () => 
       assert.deepEqual(names, [
         'ask',
         'cancel_task',
+        'close_read',
         'fetch_file',
+        'open_read',
+        'read_chunk',
+        'send_begin',
+        'send_cancel',
+        'send_chunk',
         'send_file',
+        'send_finish',
         'submit_task',
         'task_events',
         'task_result',
@@ -182,7 +189,23 @@ test('a paired peer reaches the tools with its own credential', async () => {
       const { tools } = await client.listTools();
       assert.deepEqual(
         tools.map((tool) => tool.name).sort(),
-        ['ask', 'cancel_task', 'fetch_file', 'send_file', 'submit_task', 'task_events', 'task_result', 'task_status'],
+        [
+          'ask',
+          'cancel_task',
+          'close_read',
+          'fetch_file',
+          'open_read',
+          'read_chunk',
+          'send_begin',
+          'send_cancel',
+          'send_chunk',
+          'send_file',
+          'send_finish',
+          'submit_task',
+          'task_events',
+          'task_result',
+          'task_status',
+        ],
       );
     });
   });
@@ -217,7 +240,7 @@ test('revoking a peer closes the door without restarting the Adapter', async () 
   await withPairedAdapter({ policy: { preset: 'workspace-write' } }, async ({ url, credential, peer, trust }) => {
     await withClient(url, credential, async (client, transport) => {
       await client.connect(transport);
-      assert.deepEqual((await client.listTools()).tools.length, 8);
+      assert.deepEqual((await client.listTools()).tools.length, 15);
 
       await trust.revokePeer(peer.id);
     });
@@ -300,7 +323,7 @@ test('the whole journey works over HTTP: pair, then use the credential', async (
     await withClient(`${origin}/mcp`, answer.credential, async (client, transport) => {
       await client.connect(transport);
       const { tools } = await client.listTools();
-      assert.equal(tools.length, 8);
+      assert.equal(tools.length, 15);
 
       const asked = await client.callTool({
         name: 'ask',

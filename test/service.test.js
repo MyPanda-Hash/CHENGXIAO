@@ -260,7 +260,23 @@ test('the credential from pairing opens the worker MCP endpoint', async () => {
       const { tools } = await client.listTools();
       assert.deepEqual(
         tools.map((tool) => tool.name).sort(),
-        ['ask', 'cancel_task', 'fetch_file', 'send_file', 'submit_task', 'task_events', 'task_result', 'task_status'],
+        [
+          'ask',
+          'cancel_task',
+          'close_read',
+          'fetch_file',
+          'open_read',
+          'read_chunk',
+          'send_begin',
+          'send_cancel',
+          'send_chunk',
+          'send_file',
+          'send_finish',
+          'submit_task',
+          'task_events',
+          'task_result',
+          'task_status',
+        ],
       );
     } finally {
       await client.close().catch(() => {});
