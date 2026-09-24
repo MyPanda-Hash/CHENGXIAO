@@ -108,6 +108,34 @@ dsh plugin --profile <你的 profile> add github:MyPanda-Hash/CHENGXIAO
 （POSIX 为 `$HOME/DSH Workspace`），不会把整个用户目录放进白名单。设置页里保存的
 共享工作区立即生效并自动迁移旧配置，不需要重启。
 
+## 独立 worker（两端都不开 DSH）
+
+配合上面的 CLI，**被驱动的一端也可以不开 DSH**：仓库根目录的 `worker.mjs` 是一个
+纯 node 的独立 worker——与插件共享 `~/.dsh`（同一份信任库，已配对的凭据直接可用），
+任务经 `dsh --profile headless` 命令行执行（不需要 Desktop 界面）。
+
+```powershell
+node worker.mjs --port 7331 --dirs "D:\repos"   # 监听模式（占 7331 前先停 DSH 或换端口）
+node worker.mjs --relay                          # 中继模式，零入站端口
+node worker.mjs --with-ticket ...                # 启动即打印配对链接
+node worker.mjs --ticket / --status              # 单独发码 / 看状态
+```
+
+**常驻部署**（实测有效的关键点）：
+
+- 用**计划任务**拉起（`schtasks /sc onlogon` 或 NSSM 服务）——从 DSH 会话里 `Start-Process`
+  的进程会随 agent 回合结束被杀（实测两次）；计划任务环境注意 PATH 里可能没有 `dsh`，
+  启动脚本需自行定位 `dsh.cmd`。
+- 防火墙规则**按程序放行**：DSH Desktop 有规则不代表 node.exe 有——独立 worker 换端口时
+  要单独 `New-NetFirewallRule` 放行该端口。
+- 独立 worker 必须用**真实 `~/.dsh`** 运行（`DSH_HOME` 重定向会破坏派生 agent 的凭据继承，
+  实测报 `MISSING_CREDENTIAL`）。
+- 服务器广播的配对地址可能是内网 IP（如云主机 VPC 网段），跨网配对时把链接里的地址换成
+  可达地址即可——配对码本身不受影响。
+
+实测（2026-09-24）：Windows Server 2022 云主机，DSH Desktop **完全关闭**，仅
+`schtasks` 拉起的 node worker 监听 7333——配对、ask 真实回合、凭据解析全部正常。
+
 ## 命令行直控（本机不开 DSH）
 
 配对过一次之后，凭据持久化在 `~/.dsh`——本机**不需要打开 DSH** 就能操作对端
