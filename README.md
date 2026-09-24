@@ -108,6 +108,24 @@ dsh plugin --profile <你的 profile> add github:MyPanda-Hash/CHENGXIAO
 （POSIX 为 `$HOME/DSH Workspace`），不会把整个用户目录放进白名单。设置页里保存的
 共享工作区立即生效并自动迁移旧配置，不需要重启。
 
+## 命令行直控（本机不开 DSH）
+
+配对过一次之后，凭据持久化在 `~/.dsh`——本机**不需要打开 DSH** 就能操作对端
+（对端机器的 DSH 需在运行）。仓库根目录的 `peer.cmd`（或直接
+`node scripts/peer.mjs`）：
+
+```powershell
+peer status                          # 对端、地址、远端工具面
+peer ls                              # 列对端目录（首次带目录参数，之后记住）
+peer ask "重启 nginx 并报告状态"      # 在对端跑任务
+peer read  D:\logs\app.log           # 直读对端文件（≤5MiB）
+peer pull  D:\logs\big.zip C:\local\ # 分片拉取大文件（sha256 校验）
+peer push  C:\local\report.pdf       # 分片推送到对端 staging
+```
+
+首次 `ask`/`ls` 用 `--cwd` 指定对端白名单内目录后会**记住**（存
+`~/.dsh/peer-cli.json`），之后零参数使用。
+
 ## 配对（一次性码）
 
 **两种方式，任选其一。**
