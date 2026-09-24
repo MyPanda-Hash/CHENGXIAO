@@ -14,6 +14,7 @@ import { generateKeyPair, deriveSessionKey, seal, open, encodeKey, parseKey } fr
 import { createTaskManager } from './tasks.js';
 import { runAsk } from './ask.js';
 import { defaultWorkspace } from './config.js';
+import { fetchChunked, sendChunked, createJsonRpcCaller } from './transfer-client.js';
 
 export const DEFAULT_CAPABILITIES = Object.freeze({
   readWorkspace: true,
@@ -745,6 +746,33 @@ export async function createPeerService({
     },
 
     openRelayEndpoint,
+
+    /**
+     * The MCP endpoint one peer is driven through, for programmatic
+     * transfers: a relay peer answers with its loopback proxy, a direct peer
+     * with its recorded address. Big files ride whichever path pairing chose.
+     */
+    async transferEndpointFor(name) {
+      const peer = initiator.identify(name);
+      if (peer === undefined) throw new ServiceError('worker-unknown', `no paired worker named ${name}`);
+      if (peer.relay !== undefined) {
+        const endpoint = await openRelayEndpoint(name);
+        return { url: endpoint.url, authorization: endpoint.authorization };
+      }
+      return { url: `http://${peer.address}/mcp`, authorization: `Bearer ${peer.credential}` };
+    },
+
+    /** Pull one file from a peer, chunk by chunk, into a local path. */
+    async fetchPeerFile(name, remotePath, localPath, { onProgress } = {}) {
+      const endpoint = await this.transferEndpointFor(name);
+      return await fetchChunked({ callTool: createJsonRpcCaller(endpoint), remotePath, localPath, onProgress });
+    },
+
+    /** Push one local file to a peer's staging, chunk by chunk. */
+    async sendPeerFile(name, localPath, { onProgress } = {}) {
+      const endpoint = await this.transferEndpointFor(name);
+      return await sendChunked({ callTool: createJsonRpcCaller(endpoint), localPath, onProgress });
+    },
 
     async mountPeers() {
       if (mounts === undefined) {
