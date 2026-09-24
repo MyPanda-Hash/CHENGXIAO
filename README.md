@@ -142,8 +142,10 @@ dsh plugin --profile <你的 profile> add github:MyPanda-Hash/CHENGXIAO
 **四个工具里没有任何一个能打开监听口或放宽权限。** 是否对外暴露只能改配置 ——
 这一条有测试盯着（加个叫 `peer_listen` 的工具就会红）。
 
-对端侧（被驱动的机器）提供八个工具：同步兼容入口 `ask`、异步任务 `submit_task` /
-`task_status` / `task_events` / `task_result` / `cancel_task`，以及 `fetch_file`、`send_file`。
+对端侧（被驱动的机器）提供十五个工具：同步兼容入口 `ask`、异步任务 `submit_task` /
+`task_status` / `task_events` / `task_result` / `cancel_task`、整文件 `fetch_file` / `send_file`，
+以及分片传输 `open_read` / `read_chunk` / `close_read` / `send_begin` / `send_chunk` /
+`send_finish` / `send_cancel`。
 
 ## 异步任务
 
@@ -167,6 +169,28 @@ submit_task(prompt, cwd?, timeoutMs?, idempotencyKey?) → { taskId, status }
 
 事件是生命周期事件（`submitted` / `started` / `completed` / `failed` / `cancelled` / `expired`），
 不伪造百分比进度。
+
+## 分片文件传输
+
+`fetch_file` / `send_file`（整文件、≤5 MiB）保留不变；更大的文件走分片通道：
+
+- **worker 侧工具**：`open_read` 打开一个读会话（返回大小、整文件 SHA-256、块几何），
+  `read_chunk` 任意顺序、可重复读（这就是断点续传），`close_read` 释放；
+  `send_begin` / `send_chunk` / `send_finish` / `send_cancel` 组装对端文件——
+  每块带摘要校验、按块序号幂等（重发不重写）、整文件校验通过后**原子**落进 staging，
+  绝不覆盖同名文件。会话按对端隔离，空闲 10 分钟自动回收；单文件上限 100 MiB；默认块 1 MiB。
+- **程序化驱动**（推荐，模型不适合逐块搬运）：发起端 service 提供
+  `fetchPeerFile(name, remotePath, localPath)` 与 `sendPeerFile(name, localPath)`，
+  内部经对端 MCP 端点（直连地址或中继回环代理，配对时选了哪条路就走哪条）驱动分片循环，
+  逐块校验、链路抖动自动重试（每块 3 次）、本地同样临时文件 + 原子落盘不覆盖。
+- **直连优先**：连接选择沿用既有行为——有直连用直连，中继兜底；两条路径的传输语义完全一致。
+
+```js
+// 发起端示例（service 上）：
+const landed = await service.fetchPeerFile('desk', 'D:\\shared\\dataset.bin', 'C:\\local\\copy.bin', {
+  onProgress: ({ received, totalChunks }) => console.log(`${received}/${totalChunks}`),
+});
+```
 
 ## 安全模型
 
@@ -207,7 +231,8 @@ submit_task(prompt, cwd?, timeoutMs?, idempotencyKey?) → { taskId, status }
    要常驻会话需改走 `--profile sdk`，尚未实现。
 2. **同步入口 `ask` 仍会等到任务完成**：长任务要避免占住回合请用 `submit_task` 异步流程
    （提交立即返回 `taskId`，凭它查状态/事件/结果、随时取消）；两个入口跑的是同一套任务机制。
-3. **文件走 base64 + JSON**，体积膨胀约 33%，默认上限 5 MiB。大文件请用 Git / 共享盘。
+3. **文件走 base64 + JSON**：整文件工具默认上限 5 MiB；更大的文件用分片通道
+   （见「分片文件传输」，单文件上限 100 MiB，逐块校验、断点续传）。
 4. **局域网直连或自托管中继**：直连跨 NAT 不通，需部署中继（见「跨网络：中继模式」）或组网。
 5. **Windows 上 `dsh` 是 `.cmd` 外壳**，Node 拒绝直接 spawn。插件会自动解析成真实可执行文件；
    若解析失败，启动日志会明确说明，`ask` 也会给出可行动的报错而不是 `ENOENT`。
@@ -215,7 +240,7 @@ submit_task(prompt, cwd?, timeoutMs?, idempotencyKey?) → { taskId, status }
 ## 验证
 
 ```sh
-node --test test/                    # 243 个测试，不联网、不调用模型
+node --test test/                    # 259 个测试，不联网、不调用模型
 node scripts/verify-host-load.mjs    # 用真实 Cordis 上下文跑一遍 apply()
 node scripts/verify-host-load.mjs --profile desktop   # 验证已安装副本
 node scripts/prepare-release.mjs     # 产出干净发布树（并断言没有 node_modules）
