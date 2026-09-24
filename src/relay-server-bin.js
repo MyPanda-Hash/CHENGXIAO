@@ -17,14 +17,24 @@ const host = process.env.DSH_RELAY_HOST ?? '0.0.0.0';
 const portCandidate = Number(process.env.DSH_RELAY_PORT ?? process.env.PORT ?? 7332);
 const port = Number.isInteger(portCandidate) && portCandidate > 0 && portCandidate <= 65535 ? portCandidate : 7332;
 
+// Optional offline park for devices that are not registered yet: envelopes
+// hold in memory up to this long (capped at 24h server-side). Zero keeps
+// sends to absent devices a loud 404.
+const offlineCandidate = Number(process.env.DSH_RELAY_OFFLINE_TTL_MS ?? 0);
+const offlineTtlMs = Number.isFinite(offlineCandidate) && offlineCandidate > 0 ? offlineCandidate : 0;
+
 const relay = await createRelayServer({
   host,
   port,
+  offlineTtlMs,
   log: (line) => process.stdout.write(`${new Date().toISOString()} ${line}\n`),
 });
 
 process.stdout.write(`dsh-peer-mcp relay listening on ${host}:${String(relay.port)}\n`);
 process.stdout.write('devices connect with relayUrl http://<this-host>:<port>\n');
+process.stdout.write(
+  `health: http://<this-host>:${String(relay.port)}/health | offline park: ${offlineTtlMs > 0 ? `${String(offlineTtlMs)}ms` : 'off'}\n`,
+);
 
 const shutdown = () => {
   relay.http.close();

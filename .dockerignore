@@ -1,0 +1,12 @@
+node_modules
+test
+dist
+.git
+.gitignore
+.gitattributes
+scripts
+docs
+*.md
+!README.md
+Dockerfile
+docker-compose.relay.yml

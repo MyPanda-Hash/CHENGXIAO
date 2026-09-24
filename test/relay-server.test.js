@@ -82,3 +82,86 @@ test('an unknown route is a 404, because the relay is a pure forwarder', async (
     await relay.close();
   }
 });
+
+test('a health probe answers with counts and no secrets', async () => {
+  const relay = await createRelayServer({ log: () => {} });
+  try {
+    const before = await fetch(`${relay.url}/health`);
+    assert.equal(before.status, 200);
+    const body = await before.json();
+    assert.equal(body.ok, true);
+    assert.ok(Number.isFinite(body.uptimeSec) && body.uptimeSec >= 0);
+    assert.equal(body.devices, 0);
+
+    await fetch(`${relay.url}/relay/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'device-a' }),
+    });
+    const after = await fetch(`${relay.url}/health`);
+    assert.equal((await after.json()).devices, 1);
+  } finally {
+    await relay.close();
+  }
+});
+
+test('an offline queue holds a send for a device that is not yet registered', async () => {
+  const relay = await createRelayServer({ offlineTtlMs: 60_000, log: () => {} });
+  try {
+    // The device is absent; the send is still accepted and parked.
+    const send = await fetch(`${relay.url}/relay/send`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ to: 'late-device', from: 'device-a', kind: 'pair-request', id: 'm-1', body: {} }),
+    });
+    assert.equal(send.status, 200);
+
+    await fetch(`${relay.url}/relay/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'device-a' }),
+    });
+    await fetch(`${relay.url}/relay/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'late-device' }),
+    });
+
+    const poll = await fetch(`${relay.url}/relay/poll`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'late-device', timeoutMs: 500 }),
+    });
+    const message = await poll.json();
+    assert.equal(message.id, 'm-1', 'registration drains the parked envelope');
+  } finally {
+    await relay.close();
+  }
+});
+
+test('a parked envelope expires with its ttl and never delivers stale traffic', async () => {
+  let now = 1_000_000;
+  const relay = await createRelayServer({ offlineTtlMs: 60_000, clock: () => new Date(now), log: () => {} });
+  try {
+    await fetch(`${relay.url}/relay/send`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ to: 'late-device', from: 'device-a', kind: 'msg', id: 'm-2', body: {} }),
+    });
+
+    now += 61_000;
+    await fetch(`${relay.url}/relay/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'late-device' }),
+    });
+    const poll = await fetch(`${relay.url}/relay/poll`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'late-device', timeoutMs: 200 }),
+    });
+    assert.deepEqual(await poll.json(), {}, 'an expired park is dropped, not delivered');
+  } finally {
+    await relay.close();
+  }
+});

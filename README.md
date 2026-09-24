@@ -74,6 +74,12 @@ dsh plugin --profile <你的 profile> add github:MyPanda-Hash/CHENGXIAO
 都用派生的会话密钥做 AES-256-GCM 加密；中继转发的永远是密文，配对码本身不经过中继。
 直连和中继可以共存：同一台机器开监听时局域网内仍走直连。
 
+运维：中继提供 `GET /health`（返回 ok、运行秒数、注册设备数，无任何身份信息）；
+`DSH_RELAY_OFFLINE_TTL_MS` 可选开启**内存**离线驻留（设备未注册时信封暂存至其上线，
+上限 24 小时，默认 0=关闭，即发送给缺席设备仍是明确的 404）。无数据库模式是唯一模式
+——协议里所有流程都是双方在线的请求/响应，持久化存储（PostgreSQL 之类）待出现多实例
+需求再议。Docker 部署见 `Dockerfile` / `docker-compose.relay.yml` 与 DEPLOY 文档。
+
 ### 配置
 
 配置写在 **profile 的 patch 层**（`~/.dsh/profiles/<profile>/cordis.patch.yml`），

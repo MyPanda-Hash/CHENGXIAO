@@ -57,6 +57,15 @@ const RUNTIME_FILES = [
   'src/config.js',
   'src/discovery.js',
   'src/bin.js',
+  'src/tasks.js',
+  'src/transfer-sessions.js',
+  'src/transfer-client.js',
+  'src/relay/index.js',
+  'src/relay/protocol.js',
+  'src/relay/crypto.js',
+  'src/relay/server.js',
+  'src/relay/client.js',
+  'src/relay/proxy.js',
 ];
 
 /** Whether a path holds an installed copy. */

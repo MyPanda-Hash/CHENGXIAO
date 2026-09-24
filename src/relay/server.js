@@ -32,9 +32,28 @@ export async function createRelayServer({
   maxBodyBytes = MAX_BODY_BYTES,
   host = '127.0.0.1',
   port = 0,
+  offlineTtlMs = 0,
+  clock = () => new Date(),
   log = () => {},
 } = {}) {
   const devices = new Set();
+  const startedAt = clock().getTime();
+
+  // The optional offline park: envelopes for a device that has not (yet)
+  // registered, held in memory until it does or the TTL lapses. Off by
+  // default, which keeps "send to nobody" a loud 404; the relay still never
+  // writes anything to disk either way.
+  const offlinePark = new Map(); // deviceId -> { envelope, expiresAt }
+  const MAX_OFFLINE_TTL_MS = 24 * 60 * 60 * 1000;
+  const effectiveOfflineTtlMs = Math.min(Math.max(offlineTtlMs, 0), MAX_OFFLINE_TTL_MS);
+
+  /** Drop parked envelopes whose TTL has lapsed. */
+  const sweepOffline = () => {
+    const now = clock().getTime();
+    for (const [deviceId, parked] of offlinePark) {
+      if (now >= parked.expiresAt) offlinePark.delete(deviceId);
+    }
+  };
 
   const http = createServer(async (req, res) => {
     try {
@@ -56,12 +75,27 @@ export async function createRelayServer({
   async function route(req, res) {
     const url = new URL(req.url ?? '/', 'http://relay.invalid');
 
+    if (url.pathname === '/health' && req.method === 'GET') {
+      return json(res, 200, {
+        ok: true,
+        uptimeSec: Math.max(0, Math.round((clock().getTime() - startedAt) / 1000)),
+        devices: devices.size,
+      });
+    }
+
     if (url.pathname === '/relay/register' && req.method === 'POST') {
       const body = await readJson(req, maxBodyBytes);
       if (typeof body?.deviceId !== 'string' || body.deviceId === '') {
         return json(res, 400, { ok: false, code: 'device-id-missing' });
       }
       devices.add(body.deviceId);
+      // Anything parked for this device while it was away is delivered now.
+      sweepOffline();
+      const parked = offlinePark.get(body.deviceId);
+      if (parked !== undefined) {
+        offlinePark.delete(body.deviceId);
+        mailbox.push(parked.envelope);
+      }
       return json(res, 200, { ok: true });
     }
 
@@ -69,7 +103,14 @@ export async function createRelayServer({
       const body = await readJson(req, maxBodyBytes);
       const invalid = validateEnvelope(body);
       if (invalid !== undefined) return json(res, 400, { ok: false, code: invalid });
-      if (!devices.has(body.to)) return json(res, 404, { ok: false, code: 'device-unknown' });
+      if (!devices.has(body.to)) {
+        if (effectiveOfflineTtlMs > 0) {
+          sweepOffline();
+          offlinePark.set(body.to, { envelope: body, expiresAt: clock().getTime() + effectiveOfflineTtlMs });
+          return json(res, 200, { ok: true, parked: true });
+        }
+        return json(res, 404, { ok: false, code: 'device-unknown' });
+      }
       mailbox.push(body);
       return json(res, 200, { ok: true });
     }

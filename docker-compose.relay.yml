@@ -1,0 +1,21 @@
+# Self-hosted dsh-peer-mcp relay, one command:
+#
+#   docker compose -f docker-compose.relay.yml up -d
+#
+# Devices then configure relayUrl http://<this-host>:7332 (or, behind a TLS
+# reverse proxy, the https origin). The relay holds no secrets and persists
+# nothing: restarting it costs devices a re-register, not a re-pair.
+
+services:
+  relay:
+    build: .
+    image: dsh-peer-relay
+    container_name: dsh-peer-relay
+    ports:
+      - '7332:7332'
+    environment:
+      # Optional: park envelopes for devices that are between polls, up to
+      # this long (in-memory only, capped at 24h). Omit or set 0 to keep
+      # sends to absent devices a loud 404.
+      DSH_RELAY_OFFLINE_TTL_MS: '0'
+    restart: unless-stopped

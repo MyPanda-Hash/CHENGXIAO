@@ -21,6 +21,30 @@
 > 中继，不需要任何入站端口。中继用 `node src/relay-server-bin.js` 启动，
 > 可跑在任意有公网可达的 VPS 上，建议放到 TLS 反向代理后面。
 
+## 自托管中继（Docker，推荐）
+
+仓库根目录自带发布物，一条命令起中继：
+
+```sh
+docker compose -f docker-compose.relay.yml up -d
+# 或手动：
+docker build -t dsh-peer-relay .
+docker run -d --name dsh-peer-relay -p 7332:7332 dsh-peer-relay
+```
+
+镜像只有 Node 运行时 + 源码（中继零 npm 依赖，约 194 MB），内置
+`HEALTHCHECK`（探 `/health`）。设备端配 `relayUrl: http://<中继地址>:7332`。
+
+运维要点：
+
+| 项 | 说明 |
+|---|---|
+| 健康检查 | `GET /health` → `{ ok, uptimeSec, devices }`；无任何身份信息 |
+| 离线驻留 | `DSH_RELAY_OFFLINE_TTL_MS`（默认 0=关）：设备两次轮询之间掉线时，发给它的信封在**内存**暂存至其重新注册，上限 24 小时；重启即清空 |
+| 数据 | **不落盘**。中继重启只损失在线注册状态（设备自动重连重注册），配对关系与凭据都在两端设备上，不受影响 |
+| TLS | 生产建议前置反向代理（Caddy/Nginx）做 HTTPS；通道本身端到端加密，TLS 保护的是注册面 |
+| 升级 | 换镜像重启即可，无状态迁移 |
+
 ## 零配置快速开始（同一局域网）
 
 1. 跑 `.\install-peer.ps1 -AllowedDirs "C:\Users\<用户名>\DSH Workspace"`（或省略
