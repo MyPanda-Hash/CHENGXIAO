@@ -47,6 +47,11 @@
       "platform": "web"
     }
   },
+  "dependencies": {
+    "@hono/node-server": "^2.1.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  },
   "peerDependencies": {
     "@deepseek-ai/dsh-mcp-client": "*",
     "@deepseek-ai/dsh-tools": "*"

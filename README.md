@@ -258,6 +258,26 @@ const landed = await service.fetchPeerFile('desk', 'D:\\shared\\dataset.bin', 'C
 > node scripts/measure-full-chain.mjs --relay http://<VPS>:7332 --mib 12
 > ```
 
+### 真实跨网实测（Windows 本机 ↔ 阿里云 VPS，2026-09-24）
+
+发起端 = Windows 家庭宽带（win11/node 20.19），worker 与中继 = 同一台阿里云 Ubuntu 22.04
+ECS（按流量计费，node 20.20），公网往返真实走互联网。执行器同为真实子进程（8s 应答），
+拉取方向本地逐字节校验、推送方向经 worker 侧摘要门禁落盘，**均通过**：
+
+| 环节 | 耗时 | 备注 |
+|---|---|---|
+| 经公网中继配对（X25519 握手 + 密封应答） | **119 ms** | 含全部真实 WAN 往返 |
+| `ask`（同步） | 8,197 ms | 8s 任务 + **~197 ms 跨网往返开销** |
+| `submit_task`（异步提交） | 85 ms | |
+| `cancel_task` | 105 ms | |
+| `fetchPeerFile` 12 MiB 分片拉取 | 2,389 ms | **5.0 MiB/s**（~42 Mbps，受本机下行） |
+| `sendPeerFile` 12 MiB 分片推送 | 4,453 ms | **2.7 MiB/s**（~22 Mbps，家庭宽带上行典型不对称） |
+| `fetch_file` 4 MiB 整文件对照 | 548 ms | |
+
+复现（真双机）：VPS 上 `node scripts/measure-worker.mjs --relay http://127.0.0.1:7332 --link-out worker-info.json`
++ 中继同机；发起机把链接中的中继地址换成公网 IP 后
+`node scripts/measure-full-chain.mjs --pair-info worker-info.json --relay http://<VPS>:7332`。
+
 **关于延迟**：`ask` 付的是一次完整 agent 回合的代价（独立适配器直测简单问答约 4.3 s，
 第二次 3.8 s —— 固定开销，不随次数变快）。适合"让另一台机器干活并拿结论"，
 不适合高频细粒度往返；长任务用 `submit_task` 异步提交（约 60 ms 返回），大文件走
