@@ -83,7 +83,7 @@ export function createPairThrottle({ maxFailures = 5 } = {}) {
  * }} input - one handshake attempt.
  * @returns {Promise<{ status: number, body: object }>} the HTTP answer.
  */
-export async function handlePair({ body, address, source, trust, pairing, throttle, peerFields }) {
+export async function handlePair({ body, address, source, trust, pairing, throttle, peerFields, workerDeviceName }) {
   if (source !== undefined && throttle?.blocked(source) === true) {
     return {
       status: STATUS.throttled,
@@ -134,6 +134,7 @@ export async function handlePair({ body, address, source, trust, pairing, thrott
       worker: {
         installId: trust.identity.installId,
         address,
+        ...(workerDeviceName !== undefined && { deviceName: workerDeviceName }),
       },
     },
   };

@@ -167,7 +167,7 @@ export async function pairWith({
   const peer = await store.addPeer({
     credential: payload.credential,
     address: link.address,
-    name: deviceName,
+    name: payload.worker?.deviceName ?? deviceName,
     ...(payload.worker?.installId !== undefined && { workerInstallId: payload.worker.installId }),
   });
 

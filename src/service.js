@@ -276,6 +276,7 @@ export async function createPeerService({
       pairing,
       throttle,
       peerFields: { channelKey: channelKey.toString('base64url'), relayDeviceId: envelope.from },
+      workerDeviceName: deviceName,
     });
 
     await respond({
@@ -495,6 +496,7 @@ export async function createPeerService({
             trust,
             pairing,
             throttle,
+            workerDeviceName: deviceName,
           });
           res.writeHead(answer.status, { 'content-type': 'application/json' });
           res.end(JSON.stringify(answer.body));
@@ -718,13 +720,12 @@ export async function createPeerService({
 
       try {
         // Re-pairing replaces the credential, so the old client must go first.
-        const existing = initiator
-          .listPeers()
-          .find((peer) => peer.name === initiator.identity.deviceName);
-        if (existing !== undefined) await mounts.unmount(existing.id);
+        // Key on the newly paired peer's name (the worker's real name), not the
+        // initiator's own deviceName.
+        if (outcome.peer?.name !== undefined) await mounts.unmount(outcome.peer.name);
 
         const result = await mounts.mountAll();
-        const failed = result.failed.find((entry) => entry.name === initiator.identity.deviceName);
+        const failed = result.failed.find((entry) => entry.name === outcome.peer?.name);
         if (failed !== undefined) return { ...outcome, mounted: false, mountError: failed };
         return { ...outcome, mounted: true };
       } catch (cause) {
